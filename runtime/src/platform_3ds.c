@@ -40,29 +40,6 @@ static int        g_off_x = (TOP_W - GB_W) / 2;   /* 120 */
 static int        g_off_y = (TOP_H - GB_H) / 2;   /* 48  */
 static int        g_quit  = 0;
 
-
-/* --- Contador fps -------------------------------------------------------
-*/
-static u64 g_last_time = 0;
-static int g_frames = 0;
-static float g_fps = 0.0f;
-
-void gb_platform_vsync(void)
-{
-    audio_update();
-    gspWaitForVBlank();
-
-    g_frames++;
-    u64 now = osGetTime(); // Tiempo en milisegundos
-    if (now - g_last_time >= 1000) {
-        g_fps = (g_frames * 1000.0f) / (float)(now - g_last_time);
-        g_frames = 0;
-        g_last_time = now;
-        printf("\x1b[10;1HFPS: %.2f  ", g_fps);
-    }
-}
-
-
 /* --- Audio (ndsp) -------------------------------------------------------
  * The runtime calls on_audio_sample() per stereo frame at 44100 Hz. We
  * stage samples in a ring, then each frame copy ready chunks into one of
@@ -146,7 +123,7 @@ static void save_path(char* out, size_t n, const char* rom, const char* suffix)
     const char* base = rom ? rom : "rom";
     for (const char* p = base; *p; ++p)
         if (*p == '/' || *p == '\\') base = p + 1;
-    // snprintf(out, n, "%s/%s%s", SAVE_DIR, base, suffix);
+    snprintf(out, n, "%s/%s%s", SAVE_DIR, base, suffix);
 }
 
 static bool xb_load_battery_ram(GBContext* ctx, const char* rom, void* data, size_t size)
@@ -197,18 +174,25 @@ void gb_platform_render_frame(const uint32_t* framebuffer)
     uint8_t* fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, NULL, NULL);
     if (!fb) return;
 
-    for (int gy = 0; gy < GB_H; ++gy) {
-        for (int gx = 0; gx < GB_W; ++gx) {
+    for (int gx = 0; gx < GB_W; ++gx) {
+        int x = g_off_x + gx;
+        // Puntero base a la columna x en el framebuffer de 3DS
+        uint8_t* dst_col = fb + (x * TOP_H) * 3;
+
+        for (int gy = 0; gy < GB_H; ++gy) {
+            int y = g_off_y + gy;
+            int mem_y = (TOP_H - 1 - y);
+            uint8_t* dst = dst_col + (mem_y * 3);
+
             uint32_t p = framebuffer[gy * GB_W + gx];
-            uint8_t r = (p >> 16) & 0xFF;
-            uint8_t g = (p >>  8) & 0xFF;
-            uint8_t b = (p      ) & 0xFF;
-            fb_plot(fb, g_off_x + gx, g_off_y + gy, r, g, b);
+            dst[0] = (uint8_t)(p);         // B
+            dst[1] = (uint8_t)(p >> 8);    // G
+            dst[2] = (uint8_t)(p >> 16);   // R
         }
     }
 
     gfxFlushBuffers();
-    gfxScreenSwapBuffers(GFX_TOP, true);
+    gfxScreenSwapBuffers(GFX_TOP, false); // false evita la doble espera de VBlank
 }
 
 /* --- Lifecycle ---------------------------------------------------------- */
@@ -305,10 +289,25 @@ uint8_t gb_platform_get_joypad(void)
     return g_joypad_buttons & g_joypad_dpad;
 }
 
+/* --- Contador fps ------------------------------------------------------ */
+
+static u64 g_last_time = 0;
+static int g_frames = 0;
+static float g_fps = 0.0f;
+
 void gb_platform_vsync(void)
 {
     audio_update();
-    gspWaitForVBlank();          /* 3DS runs at ~59.83 Hz */
+    // gspWaitForVBlank(); /* 3DS runs at ~59.83 Hz */
+
+    g_frames++;
+    u64 now = osGetTime();
+    if (now - g_last_time >= 1000) {
+        g_fps = (g_frames * 1000.0f) / (float)(now - g_last_time);
+        g_frames = 0;
+        g_last_time = now;
+        printf("\x1b[10;1HFPS: %.2f  ", g_fps);
+    }
 }
 
 void gb_platform_set_title(const char* title) { (void)title; }
