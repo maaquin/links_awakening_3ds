@@ -1,0 +1,26 @@
+; Entradas (registros v0 y v1)
+.alias in_pos v0
+.alias in_clr v1
+.alias in_tcd v2
+
+; Salidas (posición en pantalla y color)
+.out out_pos position
+.out out_clr color
+.out out_tcd texcoord0
+
+; Uniforms (matriz enviada desde C++)
+.fvec mvp_mat[4]
+
+.proc main
+    ; Proyectar vértices a 2D multiplicando por la matriz
+    dp4 out_pos.x, mvp_mat[0], in_pos
+    dp4 out_pos.y, mvp_mat[1], in_pos
+    dp4 out_pos.z, mvp_mat[2], in_pos
+    dp4 out_pos.w, mvp_mat[3], in_pos
+
+    ; Pasar el color directamente al fragment shader
+    mov out_clr, in_clr
+    mov out_tcd, in_tcd
+
+    end
+.end

@@ -35,11 +35,16 @@ add_library(gbrt STATIC
     ${GBRT_DIR}/src/platform_3ds.c          # Usar backend de 3DS
     ${GBRT_DIR}/src/menu_gui_stubs.c        # Usar stubs para no pedir ImGui
     ${GBRT_DIR}/src/asset_viewer_stubs.c    # Usar stubs para no pedir ImGui
+    ${GBRT_DIR}/src/default_shbin.s
 )
 
 target_include_directories(gbrt PUBLIC
     ${GBRT_DIR}/include
     ${GBRT_DIR}/src
+)
+
+target_include_directories(gbrt PRIVATE 
+    ${DEVKITPRO}/libctru/include
 )
 
 # --- Main executable --------------------------------------------------------
@@ -58,7 +63,5 @@ target_include_directories(rom PRIVATE
     ${GBRT_DIR}/include
 )
 
-target_link_libraries(rom gbrt ctru m)
-
 # Enlazar con las librerías nativas de 3DS (libctru) y matemáticas (libm)
-target_link_libraries(rom gbrt ctru m)
+target_link_libraries(rom gbrt citro3d ctru m)
