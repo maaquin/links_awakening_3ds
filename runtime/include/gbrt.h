@@ -219,6 +219,7 @@ typedef struct GBContext {
     /* Trace context */
     void* trace_file;     /**< FILE* for trace output */
     bool trace_entries_enabled;
+    bool single_step_mode;
 } GBContext;
 
 /* ============================================================================

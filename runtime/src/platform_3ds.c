@@ -40,6 +40,29 @@ static int        g_off_x = (TOP_W - GB_W) / 2;   /* 120 */
 static int        g_off_y = (TOP_H - GB_H) / 2;   /* 48  */
 static int        g_quit  = 0;
 
+
+/* --- Contador fps -------------------------------------------------------
+*/
+static u64 g_last_time = 0;
+static int g_frames = 0;
+static float g_fps = 0.0f;
+
+void gb_platform_vsync(void)
+{
+    audio_update();
+    gspWaitForVBlank();
+
+    g_frames++;
+    u64 now = osGetTime(); // Tiempo en milisegundos
+    if (now - g_last_time >= 1000) {
+        g_fps = (g_frames * 1000.0f) / (float)(now - g_last_time);
+        g_frames = 0;
+        g_last_time = now;
+        printf("\x1b[10;1HFPS: %.2f  ", g_fps);
+    }
+}
+
+
 /* --- Audio (ndsp) -------------------------------------------------------
  * The runtime calls on_audio_sample() per stereo frame at 44100 Hz. We
  * stage samples in a ring, then each frame copy ready chunks into one of
@@ -58,7 +81,11 @@ static int16_t*     g_wbuf_mem[AWBUF_N];
 
 static void audio_init(void)
 {
-    if (ndspInit() != 0) { g_audio_ok = 0; return; }
+    Result res = ndspInit();
+    if (R_FAILED(res)) {
+        g_audio_ok = 0;
+        return;
+    }
     ndspSetOutputMode(NDSP_OUTPUT_STEREO);
     ndspChnSetInterp(0, NDSP_INTERP_LINEAR);
     ndspChnSetRate(0, SR);
@@ -119,7 +146,7 @@ static void save_path(char* out, size_t n, const char* rom, const char* suffix)
     const char* base = rom ? rom : "rom";
     for (const char* p = base; *p; ++p)
         if (*p == '/' || *p == '\\') base = p + 1;
-    snprintf(out, n, "%s/%s%s", SAVE_DIR, base, suffix);
+    // snprintf(out, n, "%s/%s%s", SAVE_DIR, base, suffix);
 }
 
 static bool xb_load_battery_ram(GBContext* ctx, const char* rom, void* data, size_t size)
@@ -199,9 +226,7 @@ bool gb_platform_init(int scale)
     /* GSP_BGR8_OES is the gfx default; set explicitly for clarity. */
     gfxSetScreenFormat(GFX_TOP, GSP_BGR8_OES);
     consoleInit(GFX_BOTTOM, NULL);   /* bottom screen = debug text console */
-    printf("la360: platform_3ds init\n");
     audio_init();
-    printf("la360: audio %s\n", g_audio_ok ? "ndsp OK" : "disabled");
     return true;
 }
 
@@ -216,11 +241,29 @@ void gb_platform_shutdown(void)
     g_ctx = NULL;
 }
 
+/* Función de depuración e inyección correcta de Joypad */
+static uint8_t xb_get_joypad(GBContext* ctx) {
+    uint8_t p1 = ctx->io ? ctx->io[0x00] : 0x00; /* Registro P1/JOYP */
+    uint8_t res = 0x0F;
+
+    /* Si el juego selecciona botones de acción (bit 4 en bajo) */
+    if (!(p1 & 0x10)) {
+        res &= (g_joypad_buttons & 0x0F);
+    }
+    /* Si el juego selecciona direcciones (bit 5 en bajo) */
+    if (!(p1 & 0x20)) {
+        res &= (g_joypad_dpad & 0x0F);
+    }
+
+    return (p1 & 0xF0) | res;
+}
+
 void gb_platform_register_context(GBContext* ctx)
 {
     g_ctx = ctx;
     GBPlatformCallbacks cbs;
     memset(&cbs, 0, sizeof(cbs));
+    cbs.get_joypad       = xb_get_joypad;
     cbs.on_audio_sample  = xb_on_audio_sample;
     cbs.load_battery_ram = xb_load_battery_ram;
     cbs.save_battery_ram = xb_save_battery_ram;
@@ -236,20 +279,21 @@ bool gb_platform_poll_events(GBContext* ctx)
 
     hidScanInput();
     uint32_t k = hidKeysHeld();
+    uint32_t kDown = hidKeysDown();
 
     uint8_t btns = 0xFF, dpad = 0xFF;
 
-    /* D-pad — accept both the +Control Pad and the Circle Pad */
-    if (k & (KEY_DUP    | KEY_CPAD_UP))    dpad &= ~0x04;
-    if (k & (KEY_DDOWN  | KEY_CPAD_DOWN))  dpad &= ~0x08;
-    if (k & (KEY_DLEFT  | KEY_CPAD_LEFT))  dpad &= ~0x02;
-    if (k & (KEY_DRIGHT | KEY_CPAD_RIGHT)) dpad &= ~0x01;
+    /* D-pad: bit 0=Derecha, 1=Izquierda, 2=Arriba, 3=Abajo */
+    if (k & (KEY_DRIGHT | KEY_CPAD_RIGHT)) dpad &= ~(1 << 0);
+    if (k & (KEY_DLEFT  | KEY_CPAD_LEFT))  dpad &= ~(1 << 1);
+    if (k & (KEY_DUP    | KEY_CPAD_UP))    dpad &= ~(1 << 2);
+    if (k & (KEY_DDOWN  | KEY_CPAD_DOWN))  dpad &= ~(1 << 3);
 
-    /* Buttons: GB A/B on 3DS A/B; Select/Start direct */
-    if (k & KEY_A)      btns &= ~0x01;
-    if (k & KEY_B)      btns &= ~0x02;
-    if (k & KEY_SELECT) btns &= ~0x04;
-    if (k & KEY_START)  btns &= ~0x08;
+    /* Botones: bit 0=A, 1=B, 2=Select, 3=Start */
+    if (k & KEY_A)      btns &= ~(1 << 0);
+    if (k & KEY_B)      btns &= ~(1 << 1);
+    if (k & KEY_SELECT) btns &= ~(1 << 2);
+    if (k & KEY_START)  btns &= ~(1 << 3);
 
     g_joypad_buttons = btns;
     g_joypad_dpad    = dpad;

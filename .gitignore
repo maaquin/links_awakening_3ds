@@ -1,77 +1,7 @@
 # From upstream la-dx-recompiled
 build/
-build-*/
-*.log
-*.png
-*.bmp
-*.trace
-*.ini
 
 # Recompiler output (regenerate locally from your ROM via gb-recompiled)
 rom.c
 rom_rom.c
-
-# ROM (never commit; supply your own legally obtained copy)
-*.gb
-*.gbc
-
-# Save data and runtime state
-*.sav
-savestate.bin
-bindings.cfg
-
-# Per-platform build artifacts
-*.exe
-*.dll
-*.so
-*.dylib
-*.o
-*.obj
-*.a
-*.lib
-*.d
-*.iso
-
-# Xbox 360 / libxenon
-*.xex
-*.elf
-*.elf32
-*.elf.gz
-
-# Original Xbox (NXDK) build output
-xbox/bin/
-xbox/obj/
-*.xbe
-
-# Emscripten / WASM
-*.wasm
-*.wasm.map
-
-# Android
-*.apk
-*.aab
-# Vendored SDL2 (staged into android/ by build_android.ps1) + Gradle state
-android/app/jni/SDL/
-android/app/src/main/java/
-android/local.properties
-android/.gradle/
-android/app/.cxx/
-# ...but do commit our launcher icons (override the global *.png ignore)
-!android/app/src/main/res/**/*.png
-
-# Editor / IDE / agent state
-.vscode/
-.vs/
-.idea/
-.claude/
-.agent/
-*.swp
-*.swo
-
-# OS metadata
-.DS_Store
-Thumbs.db
-
-# Allow docs/screenshots PNGs to be committed
-!docs/**/*.png
-!screenshots/**/*.png
+functions/
