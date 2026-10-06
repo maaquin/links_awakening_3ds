@@ -2,6 +2,4 @@
 build/
 
 # Recompiler output (regenerate locally from your ROM via gb-recompiled)
-rom.c
 rom_rom.c
-functions/

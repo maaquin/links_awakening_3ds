@@ -33,6 +33,7 @@ add_library(gbrt STATIC
     ${GBRT_DIR}/src/interpreter.c
     ${GBRT_DIR}/src/hwtrace.c
     ${GBRT_DIR}/src/platform_3ds.c          # Usar backend de 3DS
+    ${GBRT_DIR}/src/rom_loader.c
     ${GBRT_DIR}/src/menu_gui_stubs.c        # Usar stubs para no pedir ImGui
     ${GBRT_DIR}/src/asset_viewer_stubs.c    # Usar stubs para no pedir ImGui
     ${GBRT_DIR}/src/default_shbin.s
@@ -49,6 +50,7 @@ target_include_directories(gbrt PRIVATE
 
 # --- Main executable --------------------------------------------------------
 file(GLOB ROM_ROOT_SOURCES "${CMAKE_SOURCE_DIR}/rom*.c")
+list(FILTER ROM_ROOT_SOURCES EXCLUDE REGEX "rom_rom\\.c$")
 file(GLOB ROM_FUNC_SOURCES "${CMAKE_SOURCE_DIR}/functions/*.c")
 
 add_executable(rom
