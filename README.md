@@ -39,7 +39,7 @@ Actualmente el proyecto se encuentra en desarrollo temprano.
 
 - [x] Compilación para Nintendo 3DS
 - [x] Ejecución en hardware real
-- [ ] Carga de ROM desde la SD
+- [x] Carga de ROM desde la SD
 - [ ] Interfaz de segunda pantalla
 - [ ] Sistema de inventario/equipamiento
 - [ ] Mundo continuo

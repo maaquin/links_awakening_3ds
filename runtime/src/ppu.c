@@ -15,24 +15,26 @@
  * ========================================================================== */
 
 static const uint32_t dmg_palette[4] = {
-    0xFFE0F8D0,  /* Lightest (white) - RGBA */
-    0xFF88C070,  /* Light */
-    0xFF346856,  /* Dark */
-    0xFF081820,  /* Darkest (black) */
+    0xFFD0F8E0,  /* Lightest (white) */
+    0xFF70C088,  /* Light */
+    0xFF566834,  /* Dark */
+    0xFF201808,  /* Darkest (black) */
 };
 
 /**
- * @brief Convert CGB RGB555 to ARGB8888
+ * @brief Convert CGB RGB555 to RGBA8888 (Little-endian: Byte 0=R, 1=G, 2=B, 3=A)
  */
 static inline uint32_t rgb555_to_argb(uint16_t rgb555) {
     uint8_t r5 = rgb555 & 0x1F;
     uint8_t g5 = (rgb555 >> 5) & 0x1F;
     uint8_t b5 = (rgb555 >> 10) & 0x1F;
-    /* Scale 5-bit to 8-bit: (x << 3) | (x >> 2) */
+    
     uint8_t r = (r5 << 3) | (r5 >> 2);
     uint8_t g = (g5 << 3) | (g5 >> 2);
     uint8_t b = (b5 << 3) | (b5 >> 2);
-    return 0xFF000000 | (r << 16) | (g << 8) | b;
+    
+    // Probar formato ABGR nativo:
+    return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | 0xFF;
 }
 
 /**
