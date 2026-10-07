@@ -26,6 +26,8 @@ typedef struct GBContext GBContext;
  */
 bool gb_platform_init(int scale);
 
+void gb_platform_set_context(GBContext *ctx);
+
 /**
  * @brief Register context with platform (sets up callbacks)
  */

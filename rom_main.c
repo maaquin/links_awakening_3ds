@@ -25,6 +25,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    gb_platform_set_context(ctx);
+
     // 3. Conecta callbacks de audio, sdmc y joypad
     gb_platform_register_context(ctx);
 

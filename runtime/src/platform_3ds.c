@@ -8,6 +8,7 @@
 #include "ppu.h"
 #include "debug_font.h"
 #include "default_shbin_data.h"
+#include "inventory_menu.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -17,6 +18,14 @@
 
 #include <3ds.h>
 #include <citro3d.h>
+
+// contexto del juego
+static GBContext *g_ctx = NULL;
+
+void gb_platform_set_context(GBContext *ctx)
+{
+    g_ctx = ctx;
+}
 
 // fps y letras
 static C3D_Tex g_font_texture;
@@ -72,6 +81,48 @@ static uint32_t *g_linear_fb = NULL;
 
 static int g_debug_vbo_offset = 6;
 
+void debug_push_rect(float x, float y, float w, float h, float r, float g, float b, float a)
+{
+    if (g_debug_vbo_offset + 6 > 32768)
+        return;
+
+    Vertex *v = &g_vbo_debug[g_debug_vbo_offset];
+    v[0] = (Vertex){{x, y, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}};
+    v[1] = (Vertex){{x + w, y, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}};
+    v[2] = (Vertex){{x, y + h, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}};
+
+    v[3] = (Vertex){{x + w, y, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}};
+    v[4] = (Vertex){{x + w, y + h, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}};
+    v[5] = (Vertex){{x, y + h, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}};
+
+    g_debug_vbo_offset += 6;
+}
+
+void debug_flush_rects(int start_offset)
+{
+    int count = g_debug_vbo_offset - start_offset;
+    if (count <= 0)
+        return;
+
+    Vertex *start = &g_vbo_debug[start_offset];
+    GSPGPU_FlushDataCache(start, count * sizeof(Vertex));
+
+    C3D_TexEnv *env = C3D_GetTexEnv(0);
+    C3D_TexEnvInit(env);
+    C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
+    C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+
+    C3D_BufInfo *bufInfo = C3D_GetBufInfo();
+    BufInfo_Init(bufInfo);
+    BufInfo_Add(bufInfo, start, sizeof(Vertex), 3, 0x210);
+    C3D_DrawArrays(GPU_TRIANGLES, 0, count);
+}
+
+int debug_get_vbo_offset(void)
+{
+    return g_debug_vbo_offset;
+}
+
 void debug_printf(float x, float y, const char *fmt, ...)
 {
     char buf[128];
@@ -109,7 +160,7 @@ void debug_printf(float x, float y, const char *fmt, ...)
             {
                 if (bits & (1 << col))
                 {
-                    if (g_debug_vbo_offset + total_vertices + 6 > 8192)
+                    if (g_debug_vbo_offset + total_vertices + 6 > 32768)
                         goto draw;
 
                     float px0 = char_x + col;
@@ -147,12 +198,38 @@ draw:
     }
 }
 
+void draw_rect(float x, float y, float w, float h, float r, float g, float b, float a)
+{
+    if (g_debug_vbo_offset + 6 > 32768)
+        return;
+
+    Vertex *v = &g_vbo_debug[g_debug_vbo_offset];
+    Vertex quad[6] = {
+        {{x, y, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}},
+        {{x + w, y, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}},
+        {{x, y + h, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}},
+
+        {{x + w, y, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}},
+        {{x + w, y + h, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}},
+        {{x, y + h, 0.5f}, {r, g, b, a}, {0.0f, 0.0f}},
+    };
+    memcpy(v, quad, sizeof(quad));
+    GSPGPU_FlushDataCache(v, sizeof(quad));
+
+    C3D_BufInfo *bufInfo = C3D_GetBufInfo();
+    BufInfo_Init(bufInfo);
+    BufInfo_Add(bufInfo, v, sizeof(Vertex), 3, 0x210);
+    C3D_DrawArrays(GPU_TRIANGLES, 0, 6);
+
+    g_debug_vbo_offset += 6;
+}
+
 static void gpu_init(void)
 {
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
 
     Mtx_OrthoTilt(&g_proj_bottom, 0.0f, 320.0f, 240.0f, 0.0f, 0.0f, 1.0f, true);
-    g_vbo_debug = (Vertex *)linearAlloc(sizeof(Vertex) * 8192);
+    g_vbo_debug = (Vertex *)linearAlloc(sizeof(Vertex) * 32768);
 
     // fps
     g_last_time = osGetTime();
@@ -286,7 +363,6 @@ static void gpu_init(void)
 
 uint8_t g_joypad_buttons = 0xFF;
 uint8_t g_joypad_dpad = 0xFF;
-static GBContext *g_ctx = NULL;
 static int g_quit = 0;
 
 /* --- Audio (ndsp) ------------------------------------------------------- */
@@ -471,49 +547,34 @@ void gb_platform_render_frame(const uint32_t *framebuffer)
     // pantalla inferior
     C3D_FrameDrawOn(g_target_bottom);
 
+    // 1. Limpiar SIEMPRE la pantalla inferior (fondo azul oscuro o negro)
+    C3D_RenderTargetClear(g_target_bottom, C3D_CLEAR_ALL, 0x102040FF, 0);
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, g_uLoc_mvp, &g_proj_bottom);
+
+    // 2. Reiniciar el offset del VBO para este frame
+    g_debug_vbo_offset = 0;
+
     if (g_show_debug)
     {
-        // 1. Fondo azul
-        C3D_RenderTargetClear(g_target_bottom, C3D_CLEAR_ALL, 0x102040FF, 0);
-        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, g_uLoc_mvp, &g_proj_bottom);
+        debug_printf(20.0f, 50.0f, "FPS:    %.2f", g_current_fps);
 
-        // Configurar color plano para figuras sin textura
-        C3D_TexEnv *env = C3D_GetTexEnv(0);
-        C3D_TexEnvInit(env);
-        C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
-        C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+        if (g_ctx && g_ctx->wram)
+        {
+            uint8_t game_state = g_ctx->wram[0x1B95];
+            uint8_t room = g_ctx->wram[0x1BA5];
+            uint8_t health = g_ctx->wram[0x1B5A];
 
-        // 2. Barra de FPS
-        float bar_w = (g_current_fps / 60.0f) * 240.0f;
-        if (bar_w > 300.0f)
-            bar_w = 300.0f;
+            int full_hearts = health / 8;
+            int fractions = (health % 8) / 2;
 
-        float r = (g_current_fps < 50.0f) ? 1.0f : 0.0f;
-        float g = (g_current_fps >= 50.0f) ? 1.0f : 0.2f;
-
-        Vertex debug_bar[6] = {
-            {{20.0f, 20.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
-            {{20.0f + bar_w, 20.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
-            {{20.0f, 40.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
-
-            {{20.0f + bar_w, 20.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
-            {{20.0f + bar_w, 40.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
-            {{20.0f, 40.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
-        };
-        memcpy(g_vbo_debug, debug_bar, sizeof(debug_bar));
-        GSPGPU_FlushDataCache(g_vbo_debug, sizeof(debug_bar));
-
-        C3D_BufInfo *bufInfo = C3D_GetBufInfo();
-        BufInfo_Init(bufInfo);
-        BufInfo_Add(bufInfo, g_vbo_debug, sizeof(Vertex), 3, 0x210);
-        C3D_DrawArrays(GPU_TRIANGLES, 0, 6);
-
-        g_debug_vbo_offset = 6;
-        debug_printf(20.0f, 60.0f, "FPS: %.2f", g_current_fps);
+            debug_printf(20.0f, 65.0f, "ESTADO: 0x%02X", game_state);
+            debug_printf(20.0f, 80.0f, "SALA:   0x%02X", room);
+            debug_printf(20.0f, 95.0f, "VIDA:   %d corazones (+%d/4)", full_hearts, fractions);
+        }
     }
     else
     {
-        C3D_RenderTargetClear(g_target_bottom, C3D_CLEAR_ALL, 0x000000FF, 0);
+        inventory_menu_render(g_ctx);
     }
 
     C3D_FrameEnd(0);
@@ -529,6 +590,7 @@ bool gb_platform_init(int scale)
     gfxInitDefault();
     gpu_init();
     audio_init();
+    inventory_menu_init();
     return true;
 }
 
@@ -569,7 +631,6 @@ static uint8_t xb_get_joypad(GBContext *ctx)
 
 void gb_platform_register_context(GBContext *ctx)
 {
-    g_ctx = ctx;
     GBPlatformCallbacks cbs;
     memset(&cbs, 0, sizeof(cbs));
     cbs.get_joypad = xb_get_joypad;
@@ -622,6 +683,7 @@ bool gb_platform_poll_events(GBContext *ctx)
 
     g_joypad_buttons = btns;
     g_joypad_dpad = dpad;
+    inventory_menu_update(g_ctx);
     return true;
 }
 
