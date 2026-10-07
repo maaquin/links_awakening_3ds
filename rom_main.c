@@ -58,7 +58,7 @@ int main(int argc, char *argv[])
             }
             gb_reset_frame(ctx);
             ctx->stopped = 0;
-            gb_platform_vsync();
+            // gb_platform_vsync();
         }
     }
 

@@ -34,6 +34,7 @@ add_library(gbrt STATIC
     ${GBRT_DIR}/src/hwtrace.c
     ${GBRT_DIR}/src/platform_3ds.c          # Usar backend de 3DS
     ${GBRT_DIR}/src/rom_loader.c
+    ${GBRT_DIR}/src/debug_font.c
     ${GBRT_DIR}/src/menu_gui_stubs.c        # Usar stubs para no pedir ImGui
     ${GBRT_DIR}/src/asset_viewer_stubs.c    # Usar stubs para no pedir ImGui
     ${GBRT_DIR}/src/default_shbin.s

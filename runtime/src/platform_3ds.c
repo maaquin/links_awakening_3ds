@@ -6,6 +6,8 @@
 #include "platform_sdl.h"
 #include "gbrt.h"
 #include "ppu.h"
+#include "debug_font.h"
+#include "default_shbin_data.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -15,7 +17,14 @@
 
 #include <3ds.h>
 #include <citro3d.h>
-#include "default_shbin_data.h"
+
+// fps y letras
+static C3D_Tex g_font_texture;
+static uint32_t *g_font_linear = NULL;
+
+static float g_current_fps = 0.0f;
+static u64 g_last_time = 0;
+static int g_frame_counter = 0;
 
 /* --- GPU & Citro3D ------------------------------------------------------- */
 
@@ -33,26 +42,135 @@ typedef struct
 #define TOP_W 400
 #define TOP_H 240
 
+static C3D_AttrInfo g_game_attrInfo;
+static C3D_BufInfo g_game_bufInfo;
+
+#define DISPLAY_TRANSFER_FLAGS                                                                     \
+    (GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |               \
+     GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) | \
+     GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO))
+
+// pantalla superior
 static C3D_RenderTarget *g_target_top = NULL;
 static DVLB_s *g_vshader_dvlb = NULL;
 static shaderProgram_s g_program;
 static s8 g_uLoc_mvp = -1;
 static C3D_Mtx g_projection;
 
+// pantalla inferior
+static C3D_RenderTarget *g_target_bottom = NULL;
+static PrintConsole g_debug_console;
+static bool g_show_debug = false;
+static C3D_Mtx g_proj_bottom;
+static Vertex *g_vbo_debug = NULL;
+
 static C3D_Tex g_fb_texture;
 static Vertex *g_vbo_data = NULL;
 static uint32_t *g_linear_fb = NULL;
+
+#include <stdarg.h>
+
+static int g_debug_vbo_offset = 6;
+
+void debug_printf(float x, float y, const char *fmt, ...)
+{
+    char buf[128];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    int len = strlen(buf);
+    if (len == 0)
+        return;
+
+    // Configurar color plano sólido
+    C3D_TexEnv *env = C3D_GetTexEnv(0);
+    C3D_TexEnvInit(env);
+    C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
+    C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+
+    Vertex *text_vbo = &g_vbo_debug[g_debug_vbo_offset];
+    int total_vertices = 0;
+
+    for (int i = 0; i < len; i++)
+    {
+        unsigned char c = (unsigned char)buf[i];
+        if (c > 127)
+            c = 32;
+
+        float char_x = x + (i * 8.0f);
+        float char_y = y;
+
+        for (int row = 0; row < 8; row++)
+        {
+            uint8_t bits = g_font_8x8[c][row];
+            for (int col = 0; col < 8; col++)
+            {
+                if (bits & (1 << col))
+                {
+                    if (g_debug_vbo_offset + total_vertices + 6 > 8192)
+                        goto draw;
+
+                    float px0 = char_x + col;
+                    float px1 = px0 + 1.0f;
+                    float py0 = char_y + row;
+                    float py1 = py0 + 1.0f;
+
+                    Vertex quad[6] = {
+                        {{px0, py0, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+                        {{px1, py0, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+                        {{px0, py1, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+
+                        {{px1, py0, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+                        {{px1, py1, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+                        {{px0, py1, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f}},
+                    };
+                    memcpy(&text_vbo[total_vertices], quad, sizeof(quad));
+                    total_vertices += 6;
+                }
+            }
+        }
+    }
+
+draw:
+    if (total_vertices > 0)
+    {
+        GSPGPU_FlushDataCache(text_vbo, total_vertices * sizeof(Vertex));
+
+        C3D_BufInfo *bufInfo = C3D_GetBufInfo();
+        BufInfo_Init(bufInfo);
+        BufInfo_Add(bufInfo, text_vbo, sizeof(Vertex), 3, 0x210);
+        C3D_DrawArrays(GPU_TRIANGLES, 0, total_vertices);
+
+        g_debug_vbo_offset += total_vertices;
+    }
+}
 
 static void gpu_init(void)
 {
     C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
 
-    // Target superior (240x400 por rotación física)
+    Mtx_OrthoTilt(&g_proj_bottom, 0.0f, 320.0f, 240.0f, 0.0f, 0.0f, 1.0f, true);
+    g_vbo_debug = (Vertex *)linearAlloc(sizeof(Vertex) * 8192);
+
+    // fps
+    g_last_time = osGetTime();
+
+    // pantalla superior (240x400 por rotación física)
     g_target_top = C3D_RenderTargetCreate(240, 400, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
     C3D_RenderTargetSetOutput(g_target_top, GFX_TOP, GFX_LEFT,
                               GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
                                   GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) |
                                   GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+
+    // pantalla inferior 240x320 por la orientación vertical del panel
+    // Prueba pasando C3D_FRAME_SYNCDRAW o los flags directos
+    g_target_bottom = C3D_RenderTargetCreate(240, 320, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
+    C3D_RenderTargetSetOutput(g_target_bottom, GFX_BOTTOM, GFX_LEFT, DISPLAY_TRANSFER_FLAGS);
+
+    // inicializar la consola sobre la pantalla inferior para usarla como overlay cuando se active
+    // consoleInit(GFX_BOTTOM, &g_debug_console);
 
     // Shader PICA200
     g_vshader_dvlb = DVLB_ParseFile((u32 *)default_shbin, default_shbin_len);
@@ -71,6 +189,7 @@ static void gpu_init(void)
     AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);
     AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 4);
     AttrInfo_AddLoader(attrInfo, 2, GPU_FLOAT, 2);
+    memcpy(&g_game_attrInfo, attrInfo, sizeof(C3D_AttrInfo));
 
     // Textura GPU 256x256 RGBA8
     C3D_TexInit(&g_fb_texture, TEX_WIDTH, TEX_HEIGHT, GPU_RGBA8);
@@ -115,8 +234,52 @@ static void gpu_init(void)
     C3D_BufInfo *bufInfo = C3D_GetBufInfo();
     BufInfo_Init(bufInfo);
     BufInfo_Add(bufInfo, g_vbo_data, sizeof(Vertex), 3, 0x210);
+    memcpy(&g_game_bufInfo, bufInfo, sizeof(C3D_BufInfo));
 
     C3D_CullFace(GPU_CULL_NONE);
+
+    // fuente para escritura
+    C3D_TexInit(&g_font_texture, 128, 128, GPU_RGBA8);
+    C3D_TexSetFilter(&g_font_texture, GPU_NEAREST, GPU_NEAREST);
+
+    // CRÍTICO: Asignar la memoria física donde residirá la textura tiled
+    g_font_texture.data = linearAlloc(128 * 128 * sizeof(uint32_t));
+
+    g_font_linear = (uint32_t *)linearAlloc(128 * 128 * sizeof(uint32_t));
+
+    // Rellenar el fondo con azul oscuro transparente o negro opaco
+    for (int i = 0; i < 128 * 128; i++)
+    {
+        g_font_linear[i] = 0x00000000;
+    }
+
+    // Llenar textura mapeando los bits (128 caracteres)
+    for (int c = 0; c < 128; c++)
+    {
+        int tx = (c % 16) * 8;
+        int ty = (c / 16) * 8;
+        for (int y = 0; y < 8; y++)
+        {
+            char row = g_font_8x8[c][y];
+            for (int x = 0; x < 8; x++)
+            {
+                if (row & (1 << x))
+                {
+                    // Píxel blanco puro y completamente opaco (RGBA8)
+                    g_font_linear[(ty + y) * 128 + (tx + x)] = 0xFFFFFFFF;
+                }
+            }
+        }
+    }
+    GSPGPU_FlushDataCache(g_font_linear, 128 * 128 * sizeof(uint32_t));
+
+    // Convertir de formato lineal a textura tiled de la GPU
+    GX_DisplayTransfer((u32 *)g_font_linear, GX_BUFFER_DIM(128, 128),
+                       (u32 *)g_font_texture.data, GX_BUFFER_DIM(128, 128),
+                       GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(1) | GX_TRANSFER_RAW_COPY(0) |
+                           GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+                           GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+    gspWaitForPPF();
 }
 
 /* --- Joypad ------------------------------------------------------------- */
@@ -253,14 +416,14 @@ void gb_platform_render_frame(const uint32_t *framebuffer)
         return;
     audio_update();
 
-    // Copia lineal directa y limpia
+    // Copia lineal
     for (int y = 0; y < 144; ++y)
     {
         memcpy(&g_linear_fb[y * TEX_WIDTH], &framebuffer[y * 160], 160 * sizeof(uint32_t));
     }
     GSPGPU_FlushDataCache(g_linear_fb, TEX_WIDTH * TEX_HEIGHT * sizeof(uint32_t));
 
-    // Conversión DMA a formato Tiled
+    // conversión dma a formato tiled
     GX_DisplayTransfer(
         (u32 *)g_linear_fb,
         GX_BUFFER_DIM(TEX_WIDTH, TEX_HEIGHT),
@@ -269,19 +432,90 @@ void gb_platform_render_frame(const uint32_t *framebuffer)
         GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(1) | GX_TRANSFER_RAW_COPY(0) |
             GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
             GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
-    // gspWaitForPPF();
+
+    // Cálculo preciso de FPS
+    g_frame_counter++;
+    u64 now = osGetTime();
+    if (now - g_last_time >= 1000)
+    {
+        g_current_fps = (float)g_frame_counter * 1000.0f / (float)(now - g_last_time);
+        g_frame_counter = 0;
+        g_last_time = now;
+    }
 
     C3D_FrameBegin(0);
+
+    // pantalla superior
+    C3D_FrameDrawOn(g_target_top);
+    C3D_RenderTargetClear(g_target_top, C3D_CLEAR_ALL, 0x181818FF, 0);
+
+    C3D_BindProgram(&g_program);
+    memcpy(C3D_GetAttrInfo(), &g_game_attrInfo, sizeof(C3D_AttrInfo));
+    memcpy(C3D_GetBufInfo(), &g_game_bufInfo, sizeof(C3D_BufInfo));
+
+    C3D_TexEnv *env = C3D_GetTexEnv(0);
+    C3D_TexEnvInit(env);
+    C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, 0, 0);
+    C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+
+    C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_ALL);
+    C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, g_uLoc_mvp, &g_projection);
+    C3D_TexBind(0, &g_fb_texture);
+
+    C3D_BufInfo *bufInfo = C3D_GetBufInfo();
+    BufInfo_Init(bufInfo);
+    BufInfo_Add(bufInfo, g_vbo_data, sizeof(Vertex), 3, 0x210);
+
+    C3D_DrawArrays(GPU_TRIANGLES, 0, 6);
+
+    // pantalla inferior
+    C3D_FrameDrawOn(g_target_bottom);
+
+    if (g_show_debug)
     {
-        C3D_FrameDrawOn(g_target_top);
-        C3D_RenderTargetClear(g_target_top, C3D_CLEAR_ALL, 0x181818FF, 0);
+        // 1. Fondo azul
+        C3D_RenderTargetClear(g_target_bottom, C3D_CLEAR_ALL, 0x102040FF, 0);
+        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, g_uLoc_mvp, &g_proj_bottom);
 
-        C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_ALL);
-        C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, g_uLoc_mvp, &g_projection);
-        C3D_TexBind(0, &g_fb_texture);
+        // Configurar color plano para figuras sin textura
+        C3D_TexEnv *env = C3D_GetTexEnv(0);
+        C3D_TexEnvInit(env);
+        C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
+        C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
 
+        // 2. Barra de FPS
+        float bar_w = (g_current_fps / 60.0f) * 240.0f;
+        if (bar_w > 300.0f)
+            bar_w = 300.0f;
+
+        float r = (g_current_fps < 50.0f) ? 1.0f : 0.0f;
+        float g = (g_current_fps >= 50.0f) ? 1.0f : 0.2f;
+
+        Vertex debug_bar[6] = {
+            {{20.0f, 20.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
+            {{20.0f + bar_w, 20.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
+            {{20.0f, 40.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
+
+            {{20.0f + bar_w, 20.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
+            {{20.0f + bar_w, 40.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
+            {{20.0f, 40.0f, 0.5f}, {r, g, 0.1f, 1.0f}, {0.0f, 0.0f}},
+        };
+        memcpy(g_vbo_debug, debug_bar, sizeof(debug_bar));
+        GSPGPU_FlushDataCache(g_vbo_debug, sizeof(debug_bar));
+
+        C3D_BufInfo *bufInfo = C3D_GetBufInfo();
+        BufInfo_Init(bufInfo);
+        BufInfo_Add(bufInfo, g_vbo_debug, sizeof(Vertex), 3, 0x210);
         C3D_DrawArrays(GPU_TRIANGLES, 0, 6);
+
+        g_debug_vbo_offset = 6;
+        debug_printf(20.0f, 60.0f, "FPS: %.2f", g_current_fps);
     }
+    else
+    {
+        C3D_RenderTargetClear(g_target_bottom, C3D_CLEAR_ALL, 0x000000FF, 0);
+    }
+
     C3D_FrameEnd(0);
 }
 
@@ -293,7 +527,6 @@ bool gb_platform_init(int scale)
     osSetSpeedupEnable(true);
 
     gfxInitDefault();
-    consoleInit(GFX_BOTTOM, NULL);
     gpu_init();
     audio_init();
     return true;
@@ -356,6 +589,16 @@ bool gb_platform_poll_events(GBContext *ctx)
 
     hidScanInput();
     uint32_t k = hidKeysHeld();
+    uint32_t kDown = hidKeysDown();
+
+    if ((k & KEY_START) && (k & KEY_SELECT))
+    {
+        if (kDown & (KEY_START | KEY_SELECT))
+        {
+            g_show_debug = !g_show_debug;
+        }
+        k &= ~(KEY_START | KEY_SELECT);
+    }
 
     uint8_t btns = 0xFF, dpad = 0xFF;
 
@@ -385,27 +628,6 @@ bool gb_platform_poll_events(GBContext *ctx)
 uint8_t gb_platform_get_joypad(void)
 {
     return g_joypad_buttons & g_joypad_dpad;
-}
-
-/* --- FPS Counter & VSync ------------------------------------------------ */
-
-static u64 g_last_time = 0;
-static int g_frames = 0;
-static float g_fps = 0.0f;
-
-void gb_platform_vsync(void)
-{
-    audio_update();
-
-    g_frames++;
-    u64 now = osGetTime();
-    if (now - g_last_time >= 1000)
-    {
-        g_fps = (g_frames * 1000.0f) / (float)(now - g_last_time);
-        g_frames = 0;
-        g_last_time = now;
-        printf("\x1b[10;1HFPS: %.2f  ", g_fps);
-    }
 }
 
 void gb_platform_set_title(const char *title) { (void)title; }
