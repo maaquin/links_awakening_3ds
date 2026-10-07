@@ -21,10 +21,16 @@
 
 // contexto del juego
 static GBContext *g_ctx = NULL;
+bool g_game_paused = false;
 
 void gb_platform_set_context(GBContext *ctx)
 {
     g_ctx = ctx;
+}
+
+bool gb_platform_is_paused(void)
+{
+    return g_game_paused;
 }
 
 // fps y letras
@@ -544,6 +550,27 @@ void gb_platform_render_frame(const uint32_t *framebuffer)
 
     C3D_DrawArrays(GPU_TRIANGLES, 0, 6);
 
+    if (g_game_paused)
+    {
+        // 1. Activar mezcla alpha para el oscurecido
+        C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
+                       GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA,
+                       GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA);
+
+        // 2. Dibujar rectángulo negro semitransparente sobre los 400x240 completos
+        // (Alpha a 0.6f para un oscurecido sutil y legible)
+        debug_push_rect(0.0f, 0.0f, 400.0f, 240.0f, 0.0f, 0.0f, 0.0f, 0.6f);
+        debug_flush_rects(g_debug_vbo_offset - 6);
+
+        // 3. Restaurar modo opaco estándar para el texto
+        C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
+                       GPU_ONE, GPU_ZERO,
+                       GPU_ONE, GPU_ZERO);
+
+        // 4. Texto centrado en pantalla superior (400x240)
+        debug_printf(175.0f, 115.0f, "PAUSA");
+    }
+
     // pantalla inferior
     C3D_FrameDrawOn(g_target_bottom);
 
@@ -652,6 +679,7 @@ bool gb_platform_poll_events(GBContext *ctx)
     uint32_t k = hidKeysHeld();
     uint32_t kDown = hidKeysDown();
 
+    // 1. Alternar overlay de depuración con START + SELECT
     if ((k & KEY_START) && (k & KEY_SELECT))
     {
         if (kDown & (KEY_START | KEY_SELECT))
@@ -659,6 +687,46 @@ bool gb_platform_poll_events(GBContext *ctx)
             g_show_debug = !g_show_debug;
         }
         k &= ~(KEY_START | KEY_SELECT);
+        kDown &= ~(KEY_START | KEY_SELECT);
+    }
+
+    // 2. Determinar si estamos en menús de inicio (Título, Ranuras, Nombre)
+    uint8_t game_state = (g_ctx && g_ctx->wram) ? g_ctx->wram[0x1B95] : 0x00;
+    bool is_title_or_intro = (game_state <= 0x03);
+
+    // 3. Manejo contextual de START
+    if (kDown & KEY_START)
+    {
+        if (!is_title_or_intro)
+        {
+            // En gameplay: alternar pausa nativa y consumir el botón
+            g_game_paused = !g_game_paused;
+            k &= ~KEY_START;
+        }
+    }
+    else if (!is_title_or_intro)
+    {
+        // En gameplay: nunca mantener START presionado hacia la Game Boy
+        k &= ~KEY_START;
+    }
+
+    // Variable para controlar si mostramos mapa nativo
+    static bool g_show_map = false;
+
+    // Manejo contextual de SELECT
+    if (kDown & KEY_SELECT)
+    {
+        if (!is_title_or_intro)
+        {
+            // En gameplay: alternar vista de mapa y consumir el botón
+            g_show_map = !g_show_map;
+            k &= ~KEY_SELECT;
+        }
+    }
+    else if (!is_title_or_intro)
+    {
+        // En gameplay: nunca pasar SELECT a la emulación
+        k &= ~KEY_SELECT;
     }
 
     uint8_t btns = 0xFF, dpad = 0xFF;
@@ -683,6 +751,7 @@ bool gb_platform_poll_events(GBContext *ctx)
 
     g_joypad_buttons = btns;
     g_joypad_dpad = dpad;
+
     inventory_menu_update(g_ctx);
     return true;
 }

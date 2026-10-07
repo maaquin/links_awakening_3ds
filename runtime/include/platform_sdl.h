@@ -18,6 +18,7 @@ extern uint8_t g_joypad_buttons;
 extern uint8_t g_joypad_dpad;
 
 typedef struct GBContext GBContext;
+bool gb_platform_is_paused(void);
 
 /**
  * @brief Initialize SDL2 platform (window, renderer)
