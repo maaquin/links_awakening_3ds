@@ -3,14 +3,51 @@
 #include <3ds.h>
 #include <stdio.h>
 #include <string.h>
+#include "ui_textures.h"
 
 uint8_t gb_read8(GBContext *ctx, uint16_t addr);
 void gb_write8(GBContext *ctx, uint16_t addr, uint8_t value);
 void debug_printf(float x, float y, const char *fmt, ...);
+void debug_push_rect(float x, float y, float w, float h, float r, float g, float b, float a);
+void debug_printf_ex(float x, float y, float scale, float r, float g, float b, const char *fmt, ...);
+void debug_flush_rects(int start_offset);
+int debug_get_vbo_offset(void);
 
 #define WRAM_EQUIP_SLOT_B 0xDB00
 #define WRAM_EQUIP_SLOT_A 0xDB01
 #define WRAM_INV_ITEMS_START 0xDB02
+#define WRAM_SHIELD_LEVEL 0xDB44
+#define WRAM_SWORD_LEVEL 0xDB4E
+#define WRAM_SEASHELLS 0xDB5F
+#define WRAM_INSTRUMENTS_START 0xDB65
+#define WRAM_TUNIC_COLOR 0xDB6F
+#define WRAM_HEART_PIECES 0xDB5C
+#define WRAM_MAX_HEARTS 0xDB5B
+
+#define ITEM_SWORD 0x01
+#define ITEM_BOMBS 0x02
+#define ITEM_BRACELET 0x03
+#define ITEM_SHIELD 0x04
+#define ITEM_BOW 0x05
+#define ITEM_HOOKSHOT 0x06
+#define ITEM_ROD 0x07
+#define ITEM_BOOTS 0x08
+#define ITEM_OCARINA 0x09
+#define ITEM_FEATHER 0x0A
+#define ITEM_SHOVEL 0x0B
+#define ITEM_POWDER 0x0C
+
+#define WRAM_BOMBS_COUNT 0xDB4D
+#define WRAM_ARROWS_COUNT 0xDB45
+#define WRAM_POWDER_COUNT 0xDB4C
+
+typedef enum
+{
+    TAB_ITEMS = 0,
+    TAB_QUEST,
+    TAB_MAP,
+    TAB_COUNT
+} MenuTab;
 
 typedef struct
 {
@@ -26,23 +63,12 @@ typedef struct
     float cur_x, cur_y;
 } DragState;
 
-typedef struct
-{
-    float pos[3];
-    float color[4];
-    float texcoord[2];
-} BatchVertex;
-
+static MenuTab g_active_tab = TAB_ITEMS;
+static MenuTab g_prev_tab = TAB_ITEMS;
 static InventorySlotUI g_slots[12];
 static InventorySlotUI g_slot_equip_b;
 static InventorySlotUI g_slot_equip_a;
 static DragState g_drag = {0};
-
-void debug_push_rect(float x, float y, float w, float h, float r, float g, float b, float a);
-void debug_flush_rects(int start_offset);
-int debug_get_vbo_offset(void);
-
-static int s_batch_start_offset = 0;
 
 static const char *get_item_name(uint8_t id)
 {
@@ -79,57 +105,133 @@ static const char *get_item_name(uint8_t id)
     }
 }
 
+static const char *s_instrument_names[8] = {
+    "1.VIOLONCHELO", "2.CUERNO OLIFANTE", "3.CAMPANA", "4.ARPA",
+    "5.MARIMBA", "6.TRIANGULO", "7.ORGANO", "8.TAMBOR"};
+
 static bool is_point_inside(float px, float py, const InventorySlotUI *slot)
 {
     return (px >= slot->x && px <= (slot->x + slot->w) &&
             py >= slot->y && py <= (slot->y + slot->h));
 }
 
-// Agrega un rectángulo al buffer sin dibujar todavía
-static void push_rect(float x, float y, float w, float h, float r, float g, float b, float a)
+void inventory_menu_toggle_map(void)
 {
-    debug_push_rect(x, y, w, h, r, g, b, a);
+    if (g_active_tab == TAB_MAP)
+        g_active_tab = g_prev_tab;
+    else
+    {
+        g_prev_tab = g_active_tab;
+        g_active_tab = TAB_MAP;
+    }
 }
 
-// Envía todas las cajas juntas a la GPU en un solo pase ultrarrápido
-static void flush_rect_batch(int start_offset)
+static void draw_item_ammo(GBContext *ctx, uint8_t item_id, float x, float y)
 {
-    debug_flush_rects(start_offset);
+    if (!ctx)
+        return;
+
+    uint8_t count = 0;
+    bool has_ammo = false;
+
+    if (item_id == ITEM_BOMBS)
+    {
+        count = gb_read8(ctx, WRAM_BOMBS_COUNT);
+        has_ammo = true;
+    }
+    else if (item_id == ITEM_BOW)
+    {
+        count = gb_read8(ctx, WRAM_ARROWS_COUNT);
+        has_ammo = true;
+    }
+    else if (item_id == ITEM_POWDER)
+    {
+        count = gb_read8(ctx, WRAM_POWDER_COUNT);
+        has_ammo = true;
+    }
+
+    if (has_ammo)
+    {
+        // En Link's Awakening los contadores a veces usan codificación BCD (Binary Coded Decimal)
+        // Si el valor viene en BCD desempacado, lo ajustamos; si es hex directo lo mostramos tal cual:
+        int display_val = ((count >> 4) * 10) + (count & 0x0F);
+
+        // Texto dorado pequeño en la esquina inferior derecha del recuadro
+        debug_printf_ex(x + 18.0f, y + 20.0f, 0.8f, 0.85f, 0.80f, 0.53f, "%02d", display_val);
+    }
 }
 
 void inventory_menu_init(void)
 {
-    float start_x = 15.0f;
-    float start_y = 35.0f;
-    float slot_w = 68.0f;
-    float slot_h = 38.0f;
-    float gap_x = 7.0f;
-    float gap_y = 8.0f;
+    // Calibrado a las 12 casillas dentro de los 192x119 px del grid (4 cols x 3 filas)
+    // Cada celda mide 48x40 px aprox
+    float start_x = 64.0f;
+    float start_y = 46.0f;
+    float slot_w = 48.0f;
+    float slot_h = 39.0f;
 
     for (int row = 0; row < 3; row++)
     {
         for (int col = 0; col < 4; col++)
         {
             int idx = row * 4 + col;
-            g_slots[idx].x = start_x + col * (slot_w + gap_x);
-            g_slots[idx].y = start_y + row * (slot_h + gap_y);
+            g_slots[idx].x = start_x + col * slot_w;
+            g_slots[idx].y = start_y + row * slot_h;
             g_slots[idx].w = slot_w;
             g_slots[idx].h = slot_h;
             g_slots[idx].slot_idx = idx;
         }
     }
 
-    g_slot_equip_b.x = 25.0f;
-    g_slot_equip_b.y = 180.0f;
-    g_slot_equip_b.w = 120.0f;
-    g_slot_equip_b.h = 45.0f;
+    // Botones B y A en la zona inferior
+    g_slot_equip_b.x = 72.0f;
+    g_slot_equip_b.y = 185.0f;
+    g_slot_equip_b.w = 62.0f; // width
+    g_slot_equip_b.h = 62.0f; // height
     g_slot_equip_b.slot_idx = -1;
 
-    g_slot_equip_a.x = 175.0f;
-    g_slot_equip_a.y = 180.0f;
-    g_slot_equip_a.w = 120.0f;
-    g_slot_equip_a.h = 45.0f;
+    g_slot_equip_a.x = 180.0f;
+    g_slot_equip_a.y = 185.0f;
+    g_slot_equip_a.w = 62.0f;
+    g_slot_equip_a.h = 62.0f;
     g_slot_equip_a.slot_idx = -2;
+}
+
+static const int s_wram_id_to_atlas_index[16] = {
+    [0x00] = -1,         // Vacío
+    [ITEM_SWORD] = 1,    // 0x01 -> Espada (índice 2)
+    [ITEM_BOMBS] = 2,    // 0x02 -> Bomba (índice 0)
+    [ITEM_BRACELET] = 3, // 0x03 -> Brazalete (índice 1)
+    [ITEM_SHIELD] = 4,   // 0x04 -> Escudo (índice 3)
+    [ITEM_BOW] = 5,      // 0x05 -> Arco (índice 4)
+    [ITEM_HOOKSHOT] = 6, // 0x06 -> Gancho (índice 5)
+    [ITEM_ROD] = 7,      // 0x07 -> Varita (índice 6)
+    [ITEM_BOOTS] = 8,   // 0x08 -> Botas (índice 12)
+    [ITEM_OCARINA] = 9,  // 0x09 -> Ocarina (índice 8)
+    [ITEM_FEATHER] = 10,  // 0x0A -> Pluma (índice 9)
+    [ITEM_SHOVEL] = 11,  // 0x0B -> Pala (índice 11)
+    [ITEM_POWDER] = 12,   // 0x0C -> Polvos mágicos (índice 7)
+    [0x0D] = 18,         // Boomerang (índice 18)
+    [0x0E] = 16,         // Poción (índice 16)
+};
+
+static void draw_item_icon(uint8_t item_id, float x, float y, float size)
+{
+    if (item_id == 0x00 || item_id >= 16)
+        return;
+
+    int atlas_idx = s_wram_id_to_atlas_index[item_id];
+    if (atlas_idx < 0)
+        return;
+
+    // Coordenadas del cuadro en la textura atlas de 128x128 (8 columnas x 16px)
+    int col = atlas_idx % 8;
+    int row = atlas_idx / 8;
+
+    float src_x = col * 16.0f;
+    float src_y = row * 16.0f;
+
+    ui_draw_sub_sprite(&g_tex_items, x, y, size, size, src_x, src_y, 16.0f, 16.0f);
 }
 
 void inventory_menu_update(GBContext *ctx)
@@ -144,19 +246,68 @@ void inventory_menu_update(GBContext *ctx)
     touchPosition touch;
     hidTouchRead(&touch);
 
-    // 1. Iniciar arrastre
+    if (kDown & KEY_L)
+        g_active_tab = (g_active_tab + TAB_COUNT - 1) % TAB_COUNT;
+    if (kDown & KEY_R)
+        g_active_tab = (g_active_tab + 1) % TAB_COUNT;
+
     if (kDown & KEY_TOUCH)
     {
-        for (int i = 0; i < 12; i++)
+        if (touch.py < 30.0f)
         {
-            if (is_point_inside(touch.px, touch.py, &g_slots[i]))
+            if (touch.px < 110.0f)
+                g_active_tab = TAB_ITEMS;
+            else if (touch.px < 210.0f)
+                g_active_tab = TAB_QUEST;
+            else
+                g_active_tab = TAB_MAP;
+            return;
+        }
+    }
+
+    if (g_active_tab == TAB_ITEMS)
+    {
+        if (kDown & KEY_TOUCH)
+        {
+            for (int i = 0; i < 12; i++)
             {
-                uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
+                if (is_point_inside(touch.px, touch.py, &g_slots[i]))
+                {
+                    uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
+                    if (item != 0x00)
+                    {
+                        g_drag.active = true;
+                        g_drag.item_id = item;
+                        g_drag.source_slot = i;
+                        g_drag.cur_x = touch.px;
+                        g_drag.cur_y = touch.py;
+                    }
+                    return;
+                }
+            }
+
+            if (is_point_inside(touch.px, touch.py, &g_slot_equip_b))
+            {
+                uint8_t item = gb_read8(ctx, WRAM_EQUIP_SLOT_B);
                 if (item != 0x00)
                 {
                     g_drag.active = true;
                     g_drag.item_id = item;
-                    g_drag.source_slot = i;
+                    g_drag.source_slot = -1;
+                    g_drag.cur_x = touch.px;
+                    g_drag.cur_y = touch.py;
+                }
+                return;
+            }
+
+            if (is_point_inside(touch.px, touch.py, &g_slot_equip_a))
+            {
+                uint8_t item = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
+                if (item != 0x00)
+                {
+                    g_drag.active = true;
+                    g_drag.item_id = item;
+                    g_drag.source_slot = -2;
                     g_drag.cur_x = touch.px;
                     g_drag.cur_y = touch.py;
                 }
@@ -164,113 +315,69 @@ void inventory_menu_update(GBContext *ctx)
             }
         }
 
-        if (is_point_inside(touch.px, touch.py, &g_slot_equip_b))
+        if (g_drag.active && (kHeld & KEY_TOUCH))
         {
-            uint8_t item = gb_read8(ctx, WRAM_EQUIP_SLOT_B);
-            if (item != 0x00)
+            if (touch.px > 0 || touch.py > 0)
             {
-                g_drag.active = true;
-                g_drag.item_id = item;
-                g_drag.source_slot = -1;
                 g_drag.cur_x = touch.px;
                 g_drag.cur_y = touch.py;
             }
-            return;
         }
 
-        if (is_point_inside(touch.px, touch.py, &g_slot_equip_a))
+        if (g_drag.active && (kUp & KEY_TOUCH))
         {
-            uint8_t item = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
-            if (item != 0x00)
-            {
-                g_drag.active = true;
-                g_drag.item_id = item;
-                g_drag.source_slot = -2;
-                g_drag.cur_x = touch.px;
-                g_drag.cur_y = touch.py;
-            }
-            return;
-        }
-    }
+            uint8_t dragged_item = g_drag.item_id;
+            float drop_x = g_drag.cur_x;
+            float drop_y = g_drag.cur_y;
 
-    // 2. Moviendo el stylus: actualizar última posición válida
-    if (g_drag.active && (kHeld & KEY_TOUCH))
-    {
-        if (touch.px > 0 || touch.py > 0)
-        {
-            g_drag.cur_x = touch.px;
-            g_drag.cur_y = touch.py;
-        }
-    }
-
-    // 3. Soltar el stylus: usar g_drag.cur_x / cur_y en lugar de touch.px / py
-    if (g_drag.active && (kUp & KEY_TOUCH))
-    {
-        uint8_t dragged_item = g_drag.item_id;
-        float drop_x = g_drag.cur_x;
-        float drop_y = g_drag.cur_y;
-
-        // ¿Se soltó en la ranura B?
-        if (is_point_inside(drop_x, drop_y, &g_slot_equip_b))
-        {
-            uint8_t old_b = gb_read8(ctx, WRAM_EQUIP_SLOT_B);
-            gb_write8(ctx, WRAM_EQUIP_SLOT_B, dragged_item);
-
-            if (g_drag.source_slot >= 0)
+            if (is_point_inside(drop_x, drop_y, &g_slot_equip_b))
             {
-                gb_write8(ctx, WRAM_INV_ITEMS_START + g_drag.source_slot, old_b);
+                uint8_t old_b = gb_read8(ctx, WRAM_EQUIP_SLOT_B);
+                gb_write8(ctx, WRAM_EQUIP_SLOT_B, dragged_item);
+                if (g_drag.source_slot >= 0)
+                    gb_write8(ctx, WRAM_INV_ITEMS_START + g_drag.source_slot, old_b);
+                else if (g_drag.source_slot == -2)
+                    gb_write8(ctx, WRAM_EQUIP_SLOT_A, old_b);
             }
-            else if (g_drag.source_slot == -2)
+            else if (is_point_inside(drop_x, drop_y, &g_slot_equip_a))
             {
-                gb_write8(ctx, WRAM_EQUIP_SLOT_A, old_b);
+                uint8_t old_a = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
+                gb_write8(ctx, WRAM_EQUIP_SLOT_A, dragged_item);
+                if (g_drag.source_slot >= 0)
+                    gb_write8(ctx, WRAM_INV_ITEMS_START + g_drag.source_slot, old_a);
+                else if (g_drag.source_slot == -1)
+                    gb_write8(ctx, WRAM_EQUIP_SLOT_B, old_a);
             }
-        }
-        // ¿Se soltó en la ranura A?
-        else if (is_point_inside(drop_x, drop_y, &g_slot_equip_a))
-        {
-            uint8_t old_a = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
-            gb_write8(ctx, WRAM_EQUIP_SLOT_A, dragged_item);
-
-            if (g_drag.source_slot >= 0)
+            else
             {
-                gb_write8(ctx, WRAM_INV_ITEMS_START + g_drag.source_slot, old_a);
-            }
-            else if (g_drag.source_slot == -1)
-            {
-                gb_write8(ctx, WRAM_EQUIP_SLOT_B, old_a);
-            }
-        }
-        // ¿Se soltó en una casilla de la cuadrícula?
-        else
-        {
-            for (int i = 0; i < 12; i++)
-            {
-                if (is_point_inside(drop_x, drop_y, &g_slots[i]))
+                for (int i = 0; i < 12; i++)
                 {
-                    if (g_drag.source_slot == -1)
+                    if (is_point_inside(drop_x, drop_y, &g_slots[i]))
                     {
-                        uint8_t target_item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
-                        gb_write8(ctx, WRAM_EQUIP_SLOT_B, target_item);
-                        gb_write8(ctx, WRAM_INV_ITEMS_START + i, dragged_item);
+                        if (g_drag.source_slot == -1)
+                        {
+                            uint8_t target = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
+                            gb_write8(ctx, WRAM_EQUIP_SLOT_B, target);
+                            gb_write8(ctx, WRAM_INV_ITEMS_START + i, dragged_item);
+                        }
+                        else if (g_drag.source_slot == -2)
+                        {
+                            uint8_t target = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
+                            gb_write8(ctx, WRAM_EQUIP_SLOT_A, target);
+                            gb_write8(ctx, WRAM_INV_ITEMS_START + i, dragged_item);
+                        }
+                        else if (g_drag.source_slot >= 0 && g_drag.source_slot != i)
+                        {
+                            uint8_t target = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
+                            gb_write8(ctx, WRAM_INV_ITEMS_START + g_drag.source_slot, target);
+                            gb_write8(ctx, WRAM_INV_ITEMS_START + i, dragged_item);
+                        }
+                        break;
                     }
-                    else if (g_drag.source_slot == -2)
-                    {
-                        uint8_t target_item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
-                        gb_write8(ctx, WRAM_EQUIP_SLOT_A, target_item);
-                        gb_write8(ctx, WRAM_INV_ITEMS_START + i, dragged_item);
-                    }
-                    else if (g_drag.source_slot >= 0 && g_drag.source_slot != i)
-                    {
-                        uint8_t target_item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
-                        gb_write8(ctx, WRAM_INV_ITEMS_START + g_drag.source_slot, target_item);
-                        gb_write8(ctx, WRAM_INV_ITEMS_START + i, dragged_item);
-                    }
-                    break;
                 }
             }
+            g_drag.active = false;
         }
-
-        g_drag.active = false;
     }
 }
 
@@ -279,95 +386,69 @@ void inventory_menu_render(GBContext *ctx)
     if (!ctx)
         return;
 
-    uint8_t eq_b = gb_read8(ctx, WRAM_EQUIP_SLOT_B);
-    uint8_t eq_a = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
+    const float col_r = 0.85f, col_g = 0.80f, col_b = 0.53f; // #D9CC88
+
+    // 1. Fondo completo (320x240)
+    ui_draw_sprite(&g_tex_bg, 0.0f, 0.0f, 320.0f, 240.0f, 256.0f, 256.0f);
+
+    // 2. Cabecera centrada
+    debug_printf_ex(45.0f, 15.0f, 1.3f, col_r, col_g, col_b, "Items");
+    debug_printf_ex(130.0f, 15.0f, 1.3f, col_r, col_g, col_b, "Equipo");
+    debug_printf_ex(222.0f, 15.0f, 1.3f, col_r, col_g, col_b, "Mapa");
+
+    // Línea activa dorada
+    int line_offset = debug_get_vbo_offset();
+    if (g_active_tab == TAB_ITEMS)
+        debug_push_rect(42.0f, 29.0f, 55.0f, 2.0f, col_r, col_g, col_b, 1.0f);
+    if (g_active_tab == TAB_QUEST)
+        debug_push_rect(126.0f, 29.0f, 66.0f, 2.0f, col_r, col_g, col_b, 1.0f);
+    if (g_active_tab == TAB_MAP)
+        debug_push_rect(218.0f, 29.0f, 47.0f, 2.0f, col_r, col_g, col_b, 1.0f);
+    debug_flush_rects(line_offset);
 
     // ==========================================
-    // FASE 1: ACUMULAR TODAS LAS CAJAS EN EL VBO
+    // PESTAÑA 1: ITEMS
     // ==========================================
-    int start_offset = debug_get_vbo_offset();
-
-    for (int i = 0; i < 12; i++)
+    if (g_active_tab == TAB_ITEMS)
     {
-        uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
-        float x = g_slots[i].x;
-        float y = g_slots[i].y;
-        float w = g_slots[i].w;
-        float h = g_slots[i].h;
+        // 3. Grid central centrado al píxel (192x119)
+        ui_draw_sprite(&g_tex_grid, 64.0f, 56.0f, 192.0f, 119.0f, 192.0f, 119.0f);
 
-        if (g_drag.active && g_drag.source_slot == i)
+        // 4. Corchetes de botones
+        ui_draw_sprite(&g_tex_btn_equip, g_slot_equip_b.x, g_slot_equip_b.y, g_slot_equip_b.w, g_slot_equip_b.h, (float)g_tex_btn_equip.width, (float)g_tex_btn_equip.height);
+        ui_draw_sprite(&g_tex_btn_equip, g_slot_equip_a.x, g_slot_equip_a.y, g_slot_equip_a.w, g_slot_equip_a.h, (float)g_tex_btn_equip.width, (float)g_tex_btn_equip.height);
+
+        // 5. Letras B y A más grandes (escala 2.0 = 16x16 px) al pie del corchete
+        debug_printf_ex(g_slot_equip_b.x + g_slot_equip_b.w - 10.0f, g_slot_equip_b.y + 20.0f, 1.5f, col_r, col_g, col_b, "B");
+        debug_printf_ex(g_slot_equip_a.x + g_slot_equip_a.w - 10.0f, g_slot_equip_a.y + 20.0f, 1.5f, col_r, col_g, col_b, "A");
+
+        // 1. Ítems equipados dentro de los corchetes (centrados dentro de los 62x62 px)
+        // Centrado exacto en los botones B y A
+        uint8_t eq_b = gb_read8(ctx, WRAM_EQUIP_SLOT_B);
+        uint8_t eq_a = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
+        if (eq_b != 0x00)
+            draw_item_icon(eq_b, g_slot_equip_b.x + 4.0f, g_slot_equip_b.y, 32.0f);
+            draw_item_ammo(ctx, eq_b, g_slot_equip_b.x + 4.0f, g_slot_equip_b.y);
+        if (eq_a != 0x00)
+            draw_item_icon(eq_a, g_slot_equip_a.x + 4.0f, g_slot_equip_a.y, 32.0f);
+            draw_item_ammo(ctx, eq_a, g_slot_equip_a.x + 4.0f, g_slot_equip_a.y);
+
+        // 2. Ítems de las 12 casillas (centrados dentro de cada celda de 48x39 px)
+
+        for (int i = 0; i < 12; i++)
         {
-            push_rect(x, y, w, h, 0.10f, 0.15f, 0.22f, 1.0f);
+            uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
+            if (item != 0x00)
+            {
+                draw_item_icon(item, g_slots[i].x + 8.0f, g_slots[i].y + 15.0f, 32.0f);
+                draw_item_ammo(ctx, item, g_slots[i].x + 8.0f, g_slots[i].y + 15.0f);
+            }
         }
-        else if (item != 0x00)
+
+        // 3. Ítem arrastrado con el Stylus (centrado bajo la punta del lápiz)
+        if (g_drag.active)
         {
-            push_rect(x, y, w, h, 0.22f, 0.32f, 0.50f, 1.0f);
+            draw_item_icon(g_drag.item_id, g_drag.cur_x - 16.0f, g_drag.cur_y - 16.0f, 32.0f);
         }
-        else
-        {
-            push_rect(x, y, w, h, 0.12f, 0.18f, 0.28f, 1.0f);
-        }
-    }
-
-    // Botón B
-    bool highlight_b = g_drag.active && is_point_inside(g_drag.cur_x, g_drag.cur_y, &g_slot_equip_b);
-    if (highlight_b)
-    {
-        push_rect(g_slot_equip_b.x, g_slot_equip_b.y, g_slot_equip_b.w, g_slot_equip_b.h, 0.25f, 0.60f, 0.30f, 1.0f);
-    }
-    else
-    {
-        push_rect(g_slot_equip_b.x, g_slot_equip_b.y, g_slot_equip_b.w, g_slot_equip_b.h, 0.18f, 0.25f, 0.38f, 1.0f);
-    }
-    push_rect(g_slot_equip_b.x, g_slot_equip_b.y, g_slot_equip_b.w, 2.0f, 1.0f, 0.6f, 0.0f, 1.0f);
-
-    // Botón A
-    bool highlight_a = g_drag.active && is_point_inside(g_drag.cur_x, g_drag.cur_y, &g_slot_equip_a);
-    if (highlight_a)
-    {
-        push_rect(g_slot_equip_a.x, g_slot_equip_a.y, g_slot_equip_a.w, g_slot_equip_a.h, 0.25f, 0.60f, 0.30f, 1.0f);
-    }
-    else
-    {
-        push_rect(g_slot_equip_a.x, g_slot_equip_a.y, g_slot_equip_a.w, g_slot_equip_a.h, 0.18f, 0.25f, 0.38f, 1.0f);
-    }
-    push_rect(g_slot_equip_a.x, g_slot_equip_a.y, g_slot_equip_a.w, 2.0f, 0.2f, 0.8f, 1.0f, 1.0f);
-
-    // Caja flotante bajo el stylus al arrastrar
-    if (g_drag.active)
-    {
-        float fx = g_drag.cur_x - 30.0f;
-        float fy = g_drag.cur_y - 20.0f;
-        push_rect(fx, fy, 65.0f, 30.0f, 0.85f, 0.75f, 0.15f, 1.0f);
-    }
-
-    // DISPARAR TODO EL LOTE DE CAJAS A LA GPU DE GOLPE
-    flush_rect_batch(start_offset);
-
-    // ==========================================
-    // FASE 2: TEXTO ENCIMA DE LAS CAJAS
-    // ==========================================
-    debug_printf(15.0f, 15.0f, "INVENTARIO (ARRASTRA A [B] O [A])");
-
-    for (int i = 0; i < 12; i++)
-    {
-        uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
-        float x = g_slots[i].x;
-        float y = g_slots[i].y;
-        debug_printf(x + 4.0f, y + 6.0f, "[%02X]", item);
-        debug_printf(x + 4.0f, y + 20.0f, "%s", get_item_name(item));
-    }
-
-    debug_printf(g_slot_equip_b.x + 8.0f, g_slot_equip_b.y + 8.0f, "BOTON [ B ]");
-    debug_printf(g_slot_equip_b.x + 8.0f, g_slot_equip_b.y + 24.0f, "%s (%02X)", get_item_name(eq_b), eq_b);
-
-    debug_printf(g_slot_equip_a.x + 8.0f, g_slot_equip_a.y + 8.0f, "BOTON [ A ]");
-    debug_printf(g_slot_equip_a.x + 8.0f, g_slot_equip_a.y + 24.0f, "%s (%02X)", get_item_name(eq_a), eq_a);
-
-    if (g_drag.active)
-    {
-        float fx = g_drag.cur_x - 30.0f;
-        float fy = g_drag.cur_y - 20.0f;
-        debug_printf(fx + 6.0f, fy + 10.0f, "%s", get_item_name(g_drag.item_id));
     }
 }

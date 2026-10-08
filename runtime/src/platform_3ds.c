@@ -9,6 +9,8 @@
 #include "debug_font.h"
 #include "default_shbin_data.h"
 #include "inventory_menu.h"
+#include "ui_textures.h"
+#include "rom_loader.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -104,6 +106,24 @@ void debug_push_rect(float x, float y, float w, float h, float r, float g, float
     g_debug_vbo_offset += 6;
 }
 
+void debug_push_textured_rect(float x, float y, float w, float h, float u0, float v0, float u1, float v1)
+{
+    if (g_debug_vbo_offset + 6 > 32768)
+        return;
+
+    Vertex *v = &g_vbo_debug[g_debug_vbo_offset];
+    // Color blanco {1,1,1,1} para no teñir la textura
+    v[0] = (Vertex){{x,     y,     0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u0, v0}};
+    v[1] = (Vertex){{x + w, y,     0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u1, v0}};
+    v[2] = (Vertex){{x,     y + h, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u0, v1}};
+
+    v[3] = (Vertex){{x + w, y,     0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u1, v0}};
+    v[4] = (Vertex){{x + w, y + h, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u1, v1}};
+    v[5] = (Vertex){{x,     y + h, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u0, v1}};
+
+    g_debug_vbo_offset += 6;
+}
+
 void debug_flush_rects(int start_offset)
 {
     int count = g_debug_vbo_offset - start_offset;
@@ -121,6 +141,37 @@ void debug_flush_rects(int start_offset)
     C3D_BufInfo *bufInfo = C3D_GetBufInfo();
     BufInfo_Init(bufInfo);
     BufInfo_Add(bufInfo, start, sizeof(Vertex), 3, 0x210);
+    C3D_DrawArrays(GPU_TRIANGLES, 0, count);
+}
+
+void debug_flush_textured_rects(int start_offset)
+{
+    int count = g_debug_vbo_offset - start_offset;
+    if (count <= 0)
+        return;
+
+    Vertex *start = &g_vbo_debug[start_offset];
+    GSPGPU_FlushDataCache(start, count * sizeof(Vertex));
+
+    // ASEGURAR ATRIBUTOS DEL SHADER
+    memcpy(C3D_GetAttrInfo(), &g_game_attrInfo, sizeof(C3D_AttrInfo));
+
+    C3D_CullFace(GPU_CULL_NONE);
+    C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_ALL);
+
+    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, 
+                   GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA, 
+                   GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA);
+
+    C3D_TexEnv *env = C3D_GetTexEnv(0);
+    C3D_TexEnvInit(env);
+    C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, 0, 0);
+    C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+
+    C3D_BufInfo *bufInfo = C3D_GetBufInfo();
+    BufInfo_Init(bufInfo);
+    BufInfo_Add(bufInfo, start, sizeof(Vertex), 3, 0x210);
+
     C3D_DrawArrays(GPU_TRIANGLES, 0, count);
 }
 
@@ -200,6 +251,70 @@ draw:
         BufInfo_Add(bufInfo, text_vbo, sizeof(Vertex), 3, 0x210);
         C3D_DrawArrays(GPU_TRIANGLES, 0, total_vertices);
 
+        g_debug_vbo_offset += total_vertices;
+    }
+}
+
+void debug_printf_ex(float x, float y, float scale, float r, float g, float b, const char *fmt, ...)
+{
+    char buf[128];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    int len = strlen(buf);
+    if (len == 0) return;
+
+    C3D_TexEnv *env = C3D_GetTexEnv(0);
+    C3D_TexEnvInit(env);
+    C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
+    C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+
+    Vertex *text_vbo = &g_vbo_debug[g_debug_vbo_offset];
+    int total_vertices = 0;
+
+    for (int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)buf[i];
+        if (c > 127) c = 32;
+
+        float char_x = x + (i * 8.0f * scale);
+        float char_y = y;
+
+        for (int row = 0; row < 8; row++) {
+            uint8_t bits = g_font_8x8[c][row];
+            for (int col = 0; col < 8; col++) {
+                if (bits & (1 << col)) {
+                    if (g_debug_vbo_offset + total_vertices + 6 > 32768) goto draw;
+
+                    float px0 = char_x + (col * scale);
+                    float px1 = px0 + scale;
+                    float py0 = char_y + (row * scale);
+                    float py1 = py0 + scale;
+
+                    Vertex quad[6] = {
+                        {{px0, py0, 0.5f}, {r, g, b, 1.0f}, {0.0f, 0.0f}},
+                        {{px1, py0, 0.5f}, {r, g, b, 1.0f}, {0.0f, 0.0f}},
+                        {{px0, py1, 0.5f}, {r, g, b, 1.0f}, {0.0f, 0.0f}},
+
+                        {{px1, py0, 0.5f}, {r, g, b, 1.0f}, {0.0f, 0.0f}},
+                        {{px1, py1, 0.5f}, {r, g, b, 1.0f}, {0.0f, 0.0f}},
+                        {{px0, py1, 0.5f}, {r, g, b, 1.0f}, {0.0f, 0.0f}},
+                    };
+                    memcpy(&text_vbo[total_vertices], quad, sizeof(quad));
+                    total_vertices += 6;
+                }
+            }
+        }
+    }
+
+draw:
+    if (total_vertices > 0) {
+        GSPGPU_FlushDataCache(text_vbo, total_vertices * sizeof(Vertex));
+        C3D_BufInfo *bufInfo = C3D_GetBufInfo();
+        BufInfo_Init(bufInfo);
+        BufInfo_Add(bufInfo, text_vbo, sizeof(Vertex), 3, 0x210);
+        C3D_DrawArrays(GPU_TRIANGLES, 0, total_vertices);
         g_debug_vbo_offset += total_vertices;
     }
 }
@@ -618,6 +733,8 @@ bool gb_platform_init(int scale)
     gpu_init();
     audio_init();
     inventory_menu_init();
+    ui_textures_init();
+    rom_extract_item_textures(ROM_SD_PATH);
     return true;
 }
 
@@ -719,7 +836,7 @@ bool gb_platform_poll_events(GBContext *ctx)
         if (!is_title_or_intro)
         {
             // En gameplay: alternar vista de mapa y consumir el botón
-            g_show_map = !g_show_map;
+            inventory_menu_toggle_map();
             k &= ~KEY_SELECT;
         }
     }

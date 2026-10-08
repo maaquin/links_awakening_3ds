@@ -76,6 +76,16 @@ void gb_platform_save_state(GBContext* ctx);
  */
 void gb_platform_load_state(GBContext* ctx);
 
+// Funciones gráficas y de depuración para 3DS (Citro3D / VBO)
+int  debug_get_vbo_offset(void);
+void debug_push_rect(float x, float y, float w, float h, float r, float g, float b, float a);
+void debug_push_textured_rect(float x, float y, float w, float h, float u0, float v0, float u1, float v1);
+void debug_flush_rects(int start_offset);
+void debug_flush_textured_rects(int start_offset);
+void debug_printf(float x, float y, const char *fmt, ...);
+void debug_printf_ex(float x, float y, float scale, float r, float g, float b, const char *fmt, ...);
+void draw_rect(float x, float y, float w, float h, float r, float g, float b, float a);
+
 #ifdef __cplusplus
 }
 #endif
