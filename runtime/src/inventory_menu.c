@@ -41,6 +41,9 @@ int debug_get_vbo_offset(void);
 #define WRAM_ARROWS_COUNT 0xDB45
 #define WRAM_POWDER_COUNT 0xDB4C
 
+bool hotswap_is_active(void);
+uint8_t hotswap_get_backup_b(void);
+
 typedef enum
 {
     TAB_ITEMS = 0,
@@ -65,9 +68,11 @@ typedef struct
 
 static MenuTab g_active_tab = TAB_ITEMS;
 static MenuTab g_prev_tab = TAB_ITEMS;
-static InventorySlotUI g_slots[12];
+static InventorySlotUI g_slots[10];
 static InventorySlotUI g_slot_equip_b;
 static InventorySlotUI g_slot_equip_a;
+static InventorySlotUI g_slot_equip_x;
+static InventorySlotUI g_slot_equip_y;
 static DragState g_drag = {0};
 
 static const char *get_item_name(uint8_t id)
@@ -163,18 +168,16 @@ static void draw_item_ammo(GBContext *ctx, uint8_t item_id, float x, float y)
 
 void inventory_menu_init(void)
 {
-    // Calibrado a las 12 casillas dentro de los 192x119 px del grid (4 cols x 3 filas)
-    // Cada celda mide 48x40 px aprox
-    float start_x = 64.0f;
-    float start_y = 46.0f;
-    float slot_w = 48.0f;
-    float slot_h = 39.0f;
+    float start_x = 40.5f;
+    float start_y = 70.0f;
+    float slot_w = 47.8f; // 239 / 5
+    float slot_h = 39.5f; // 79 / 2
 
-    for (int row = 0; row < 3; row++)
+    for (int row = 0; row < 2; row++)
     {
-        for (int col = 0; col < 4; col++)
+        for (int col = 0; col < 5; col++)
         {
-            int idx = row * 4 + col;
+            int idx = row * 5 + col;
             g_slots[idx].x = start_x + col * slot_w;
             g_slots[idx].y = start_y + row * slot_h;
             g_slots[idx].w = slot_w;
@@ -183,18 +186,30 @@ void inventory_menu_init(void)
         }
     }
 
-    // Botones B y A en la zona inferior
-    g_slot_equip_b.x = 72.0f;
-    g_slot_equip_b.y = 185.0f;
+    // Botones X, Y, B y A en la zona inferior
+    g_slot_equip_b.x = 40.0f;
+    g_slot_equip_b.y = 170.0f;
     g_slot_equip_b.w = 62.0f; // width
     g_slot_equip_b.h = 62.0f; // height
     g_slot_equip_b.slot_idx = -1;
 
-    g_slot_equip_a.x = 180.0f;
-    g_slot_equip_a.y = 185.0f;
+    g_slot_equip_a.x = 112.0f;
+    g_slot_equip_a.y = 170.0f;
     g_slot_equip_a.w = 62.0f;
     g_slot_equip_a.h = 62.0f;
     g_slot_equip_a.slot_idx = -2;
+
+    g_slot_equip_x.x = 184.0f;
+    g_slot_equip_x.y = 170.0f;
+    g_slot_equip_x.w = 62.0f; // width
+    g_slot_equip_x.h = 62.0f; // height
+    g_slot_equip_x.slot_idx = -3;
+
+    g_slot_equip_y.x = 256.0f;
+    g_slot_equip_y.y = 170.0f;
+    g_slot_equip_y.w = 62.0f;
+    g_slot_equip_y.h = 62.0f;
+    g_slot_equip_y.slot_idx = -4;
 }
 
 static const int s_wram_id_to_atlas_index[16] = {
@@ -206,11 +221,11 @@ static const int s_wram_id_to_atlas_index[16] = {
     [ITEM_BOW] = 5,      // 0x05 -> Arco (índice 4)
     [ITEM_HOOKSHOT] = 6, // 0x06 -> Gancho (índice 5)
     [ITEM_ROD] = 7,      // 0x07 -> Varita (índice 6)
-    [ITEM_BOOTS] = 8,   // 0x08 -> Botas (índice 12)
+    [ITEM_BOOTS] = 8,    // 0x08 -> Botas (índice 12)
     [ITEM_OCARINA] = 9,  // 0x09 -> Ocarina (índice 8)
-    [ITEM_FEATHER] = 10,  // 0x0A -> Pluma (índice 9)
+    [ITEM_FEATHER] = 10, // 0x0A -> Pluma (índice 9)
     [ITEM_SHOVEL] = 11,  // 0x0B -> Pala (índice 11)
-    [ITEM_POWDER] = 12,   // 0x0C -> Polvos mágicos (índice 7)
+    [ITEM_POWDER] = 12,  // 0x0C -> Polvos mágicos (índice 7)
     [0x0D] = 18,         // Boomerang (índice 18)
     [0x0E] = 16,         // Poción (índice 16)
 };
@@ -232,6 +247,35 @@ static void draw_item_icon(uint8_t item_id, float x, float y, float size)
     float src_y = row * 16.0f;
 
     ui_draw_sub_sprite(&g_tex_items, x, y, size, size, src_x, src_y, 16.0f, 16.0f);
+}
+
+static void write_to_source_slot(GBContext *ctx, int source_slot, uint8_t value)
+{
+    if (source_slot >= 0)
+    {
+        // Origen fue una de las 10 casillas de la grilla
+        gb_write8(ctx, WRAM_INV_ITEMS_START + source_slot, value);
+    }
+    else if (source_slot == -1)
+    {
+        // Origen fue el botón B
+        gb_write8(ctx, WRAM_EQUIP_SLOT_B, value);
+    }
+    else if (source_slot == -2)
+    {
+        // Origen fue el botón A
+        gb_write8(ctx, WRAM_EQUIP_SLOT_A, value);
+    }
+    else if (source_slot == -3)
+    {
+        // Origen fue el botón X
+        gb_write8(ctx, WRAM_INV_ITEMS_START + 10, value);
+    }
+    else if (source_slot == -4)
+    {
+        // Origen fue el botón Y
+        gb_write8(ctx, WRAM_INV_ITEMS_START + 11, value);
+    }
 }
 
 void inventory_menu_update(GBContext *ctx)
@@ -269,7 +313,7 @@ void inventory_menu_update(GBContext *ctx)
     {
         if (kDown & KEY_TOUCH)
         {
-            for (int i = 0; i < 12; i++)
+            for (int i = 0; i < 10; i++)
             {
                 if (is_point_inside(touch.px, touch.py, &g_slots[i]))
                 {
@@ -313,6 +357,34 @@ void inventory_menu_update(GBContext *ctx)
                 }
                 return;
             }
+
+            if (is_point_inside(touch.px, touch.py, &g_slot_equip_x))
+            {
+                uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + 10);
+                if (item != 0x00)
+                {
+                    g_drag.active = true;
+                    g_drag.item_id = item;
+                    g_drag.source_slot = -3;
+                    g_drag.cur_x = touch.px;
+                    g_drag.cur_y = touch.py;
+                }
+                return;
+            }
+
+            if (is_point_inside(touch.px, touch.py, &g_slot_equip_y))
+            {
+                uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + 11);
+                if (item != 0x00)
+                {
+                    g_drag.active = true;
+                    g_drag.item_id = item;
+                    g_drag.source_slot = -4;
+                    g_drag.cur_x = touch.px;
+                    g_drag.cur_y = touch.py;
+                }
+                return;
+            }
         }
 
         if (g_drag.active && (kHeld & KEY_TOUCH))
@@ -334,44 +406,35 @@ void inventory_menu_update(GBContext *ctx)
             {
                 uint8_t old_b = gb_read8(ctx, WRAM_EQUIP_SLOT_B);
                 gb_write8(ctx, WRAM_EQUIP_SLOT_B, dragged_item);
-                if (g_drag.source_slot >= 0)
-                    gb_write8(ctx, WRAM_INV_ITEMS_START + g_drag.source_slot, old_b);
-                else if (g_drag.source_slot == -2)
-                    gb_write8(ctx, WRAM_EQUIP_SLOT_A, old_b);
+                write_to_source_slot(ctx, g_drag.source_slot, old_b);
             }
             else if (is_point_inside(drop_x, drop_y, &g_slot_equip_a))
             {
                 uint8_t old_a = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
                 gb_write8(ctx, WRAM_EQUIP_SLOT_A, dragged_item);
-                if (g_drag.source_slot >= 0)
-                    gb_write8(ctx, WRAM_INV_ITEMS_START + g_drag.source_slot, old_a);
-                else if (g_drag.source_slot == -1)
-                    gb_write8(ctx, WRAM_EQUIP_SLOT_B, old_a);
+                write_to_source_slot(ctx, g_drag.source_slot, old_a);
+            }
+            else if (is_point_inside(drop_x, drop_y, &g_slot_equip_x))
+            {
+                uint8_t old_x = gb_read8(ctx, WRAM_INV_ITEMS_START + 10);
+                gb_write8(ctx, WRAM_INV_ITEMS_START + 10, dragged_item);
+                write_to_source_slot(ctx, g_drag.source_slot, old_x);
+            }
+            else if (is_point_inside(drop_x, drop_y, &g_slot_equip_y))
+            {
+                uint8_t old_y = gb_read8(ctx, WRAM_INV_ITEMS_START + 11);
+                gb_write8(ctx, WRAM_INV_ITEMS_START + 11, dragged_item);
+                write_to_source_slot(ctx, g_drag.source_slot, old_y);
             }
             else
             {
-                for (int i = 0; i < 12; i++)
+                for (int i = 0; i < 10; i++)
                 {
                     if (is_point_inside(drop_x, drop_y, &g_slots[i]))
                     {
-                        if (g_drag.source_slot == -1)
-                        {
-                            uint8_t target = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
-                            gb_write8(ctx, WRAM_EQUIP_SLOT_B, target);
-                            gb_write8(ctx, WRAM_INV_ITEMS_START + i, dragged_item);
-                        }
-                        else if (g_drag.source_slot == -2)
-                        {
-                            uint8_t target = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
-                            gb_write8(ctx, WRAM_EQUIP_SLOT_A, target);
-                            gb_write8(ctx, WRAM_INV_ITEMS_START + i, dragged_item);
-                        }
-                        else if (g_drag.source_slot >= 0 && g_drag.source_slot != i)
-                        {
-                            uint8_t target = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
-                            gb_write8(ctx, WRAM_INV_ITEMS_START + g_drag.source_slot, target);
-                            gb_write8(ctx, WRAM_INV_ITEMS_START + i, dragged_item);
-                        }
+                        uint8_t old_slot = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
+                        gb_write8(ctx, WRAM_INV_ITEMS_START + i, dragged_item);
+                        write_to_source_slot(ctx, g_drag.source_slot, old_slot);
                         break;
                     }
                 }
@@ -411,37 +474,49 @@ void inventory_menu_render(GBContext *ctx)
     // ==========================================
     if (g_active_tab == TAB_ITEMS)
     {
-        // 3. Grid central centrado al píxel (192x119)
-        ui_draw_sprite(&g_tex_grid, 64.0f, 56.0f, 192.0f, 119.0f, 192.0f, 119.0f);
+        // 3. Grid central centrado al píxel (239x79)
+        ui_draw_sprite(&g_tex_grid, 40.5f, 70.0f, 239.0f, 79.0f, 239.0f, 79.0f);
 
         // 4. Corchetes de botones
         ui_draw_sprite(&g_tex_btn_equip, g_slot_equip_b.x, g_slot_equip_b.y, g_slot_equip_b.w, g_slot_equip_b.h, (float)g_tex_btn_equip.width, (float)g_tex_btn_equip.height);
         ui_draw_sprite(&g_tex_btn_equip, g_slot_equip_a.x, g_slot_equip_a.y, g_slot_equip_a.w, g_slot_equip_a.h, (float)g_tex_btn_equip.width, (float)g_tex_btn_equip.height);
+        ui_draw_sprite(&g_tex_btn_equip, g_slot_equip_x.x, g_slot_equip_x.y, g_slot_equip_x.w, g_slot_equip_x.h, (float)g_tex_btn_equip.width, (float)g_tex_btn_equip.height);
+        ui_draw_sprite(&g_tex_btn_equip, g_slot_equip_y.x, g_slot_equip_y.y, g_slot_equip_y.w, g_slot_equip_y.h, (float)g_tex_btn_equip.width, (float)g_tex_btn_equip.height);
 
-        // 5. Letras B y A más grandes (escala 2.0 = 16x16 px) al pie del corchete
-        debug_printf_ex(g_slot_equip_b.x + g_slot_equip_b.w - 10.0f, g_slot_equip_b.y + 20.0f, 1.5f, col_r, col_g, col_b, "B");
-        debug_printf_ex(g_slot_equip_a.x + g_slot_equip_a.w - 10.0f, g_slot_equip_a.y + 20.0f, 1.5f, col_r, col_g, col_b, "A");
+        // 5. Letras X, Y, B y A más grandes (escala 2.0 = 16x16 px) al pie del corchete
+        debug_printf_ex(g_slot_equip_b.x - 13.0f, g_slot_equip_b.y, 1.3f, col_r, col_g, col_b, "B");
+        debug_printf_ex(g_slot_equip_a.x - 13.0f, g_slot_equip_a.y, 1.3f, col_r, col_g, col_b, "A");
+        debug_printf_ex(g_slot_equip_x.x - 13.0f, g_slot_equip_x.y, 1.3f, col_r, col_g, col_b, "X");
+        debug_printf_ex(g_slot_equip_y.x - 13.0f, g_slot_equip_y.y, 1.3f, col_r, col_g, col_b, "Y");
 
         // 1. Ítems equipados dentro de los corchetes (centrados dentro de los 62x62 px)
-        // Centrado exacto en los botones B y A
-        uint8_t eq_b = gb_read8(ctx, WRAM_EQUIP_SLOT_B);
+        // Centrado exacto en los botones X, Y, B y A
+        uint8_t eq_b = hotswap_is_active() ? hotswap_get_backup_b() : gb_read8(ctx, WRAM_EQUIP_SLOT_B);
         uint8_t eq_a = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
+        uint8_t eq_x = gb_read8(ctx, WRAM_INV_ITEMS_START + 10);
+        uint8_t eq_y = gb_read8(ctx, WRAM_INV_ITEMS_START + 11);
         if (eq_b != 0x00)
             draw_item_icon(eq_b, g_slot_equip_b.x + 4.0f, g_slot_equip_b.y, 32.0f);
-            draw_item_ammo(ctx, eq_b, g_slot_equip_b.x + 4.0f, g_slot_equip_b.y);
+        draw_item_ammo(ctx, eq_b, g_slot_equip_b.x + 4.0f, g_slot_equip_b.y);
         if (eq_a != 0x00)
             draw_item_icon(eq_a, g_slot_equip_a.x + 4.0f, g_slot_equip_a.y, 32.0f);
-            draw_item_ammo(ctx, eq_a, g_slot_equip_a.x + 4.0f, g_slot_equip_a.y);
+        draw_item_ammo(ctx, eq_a, g_slot_equip_a.x + 4.0f, g_slot_equip_a.y);
+        if (eq_x != 0x00)
+            draw_item_icon(eq_x, g_slot_equip_x.x + 4.0f, g_slot_equip_x.y, 32.0f);
+        draw_item_ammo(ctx, eq_x, g_slot_equip_x.x + 4.0f, g_slot_equip_x.y);
+        if (eq_y != 0x00)
+            draw_item_icon(eq_y, g_slot_equip_y.x + 4.0f, g_slot_equip_y.y, 32.0f);
+        draw_item_ammo(ctx, eq_y, g_slot_equip_y.x + 4.0f, g_slot_equip_y.y);
 
-        // 2. Ítems de las 12 casillas (centrados dentro de cada celda de 48x39 px)
+        // 2. Ítems de las 10 casillas (centrados dentro de cada celda de 48x39 px)
 
-        for (int i = 0; i < 12; i++)
+        for (int i = 0; i < 10; i++)
         {
             uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
             if (item != 0x00)
             {
-                draw_item_icon(item, g_slots[i].x + 8.0f, g_slots[i].y + 15.0f, 32.0f);
-                draw_item_ammo(ctx, item, g_slots[i].x + 8.0f, g_slots[i].y + 15.0f);
+                draw_item_icon(item, g_slots[i].x + 8.0f, g_slots[i].y + 4.0f, 32.0f);
+                draw_item_ammo(ctx, item, g_slots[i].x + 8.0f, g_slots[i].y + 4.0f);
             }
         }
 

@@ -786,6 +786,26 @@ void gb_platform_register_context(GBContext *ctx)
 
 /* --- Input -------------------------------------------------------------- */
 
+// sistema de botones x e y
+#define WRAM_INV_ITEMS_START 0xDB02
+#define WRAM_ITEM_B          0xDB00
+#define WRAM_SLOT_X          (WRAM_INV_ITEMS_START + 10) // 0xDB0C
+#define WRAM_SLOT_Y          (WRAM_INV_ITEMS_START + 11) // 0xDB0D
+
+static uint8_t s_backup_item_b = 0x00;
+static bool    s_hotswap_active = false;
+static uint8_t s_active_hotswap_btn = 0; // 1 = X, 2 = Y
+
+bool hotswap_is_active(void)
+{
+    return s_hotswap_active;
+}
+
+uint8_t hotswap_get_backup_b(void)
+{
+    return s_backup_item_b;
+}
+
 bool gb_platform_poll_events(GBContext *ctx)
 {
     (void)ctx;
@@ -795,6 +815,7 @@ bool gb_platform_poll_events(GBContext *ctx)
     hidScanInput();
     uint32_t k = hidKeysHeld();
     uint32_t kDown = hidKeysDown();
+    uint32_t kUp = hidKeysUp(); // <-- Agregado para detectar soltado de botones
 
     // 1. Alternar overlay de depuración con START + SELECT
     if ((k & KEY_START) && (k & KEY_SELECT))
@@ -816,14 +837,12 @@ bool gb_platform_poll_events(GBContext *ctx)
     {
         if (!is_title_or_intro)
         {
-            // En gameplay: alternar pausa nativa y consumir el botón
             g_game_paused = !g_game_paused;
             k &= ~KEY_START;
         }
     }
     else if (!is_title_or_intro)
     {
-        // En gameplay: nunca mantener START presionado hacia la Game Boy
         k &= ~KEY_START;
     }
 
@@ -835,36 +854,74 @@ bool gb_platform_poll_events(GBContext *ctx)
     {
         if (!is_title_or_intro)
         {
-            // En gameplay: alternar vista de mapa y consumir el botón
             inventory_menu_toggle_map();
             k &= ~KEY_SELECT;
         }
     }
     else if (!is_title_or_intro)
     {
-        // En gameplay: nunca pasar SELECT a la emulación
         k &= ~KEY_SELECT;
+    }
+
+    // 4. LÓGICA DE HOT-SWAP (X e Y ejecutados mediante B)
+    if (!is_title_or_intro && ctx)
+    {
+        // Al presionar X o Y: respaldar B y colocar el ítem
+        if (!s_hotswap_active)
+        {
+            if (kDown & KEY_X)
+            {
+                uint8_t item = gb_read8(ctx, WRAM_SLOT_X);
+                if (item != 0x00)
+                {
+                    s_backup_item_b = gb_read8(ctx, WRAM_ITEM_B);
+                    gb_write8(ctx, WRAM_ITEM_B, item);
+                    s_hotswap_active = true;
+                    s_active_hotswap_btn = 1;
+                }
+            }
+            else if (kDown & KEY_Y)
+            {
+                uint8_t item = gb_read8(ctx, WRAM_SLOT_Y);
+                if (item != 0x00)
+                {
+                    s_backup_item_b = gb_read8(ctx, WRAM_ITEM_B);
+                    gb_write8(ctx, WRAM_ITEM_B, item);
+                    s_hotswap_active = true;
+                    s_active_hotswap_btn = 2;
+                }
+            }
+        }
+
+        // Al soltar el botón correspondiente: restaurar B
+        if (s_hotswap_active)
+        {
+            bool released = (s_active_hotswap_btn == 1 && (kUp & KEY_X)) ||
+                            (s_active_hotswap_btn == 2 && (kUp & KEY_Y));
+            if (released)
+            {
+                gb_write8(ctx, WRAM_ITEM_B, s_backup_item_b);
+                s_hotswap_active = false;
+                s_active_hotswap_btn = 0;
+            }
+        }
     }
 
     uint8_t btns = 0xFF, dpad = 0xFF;
 
-    if (k & (KEY_DRIGHT | KEY_CPAD_RIGHT))
-        dpad &= ~(1 << 0);
-    if (k & (KEY_DLEFT | KEY_CPAD_LEFT))
-        dpad &= ~(1 << 1);
-    if (k & (KEY_DUP | KEY_CPAD_UP))
-        dpad &= ~(1 << 2);
-    if (k & (KEY_DDOWN | KEY_CPAD_DOWN))
-        dpad &= ~(1 << 3);
+    if (k & (KEY_DRIGHT | KEY_CPAD_RIGHT)) dpad &= ~(1 << 0);
+    if (k & (KEY_DLEFT | KEY_CPAD_LEFT))   dpad &= ~(1 << 1);
+    if (k & (KEY_DUP | KEY_CPAD_UP))       dpad &= ~(1 << 2);
+    if (k & (KEY_DDOWN | KEY_CPAD_DOWN))   dpad &= ~(1 << 3);
 
-    if (k & KEY_A)
-        btns &= ~(1 << 0);
-    if (k & KEY_B)
+    if (k & KEY_A) btns &= ~(1 << 0);
+
+    // B se activa si se presiona B físico O si el hot-swap está activo (manteniendo X o Y)
+    if ((k & KEY_B) || s_hotswap_active)
         btns &= ~(1 << 1);
-    if (k & KEY_SELECT)
-        btns &= ~(1 << 2);
-    if (k & KEY_START)
-        btns &= ~(1 << 3);
+
+    if (k & KEY_SELECT) btns &= ~(1 << 2);
+    if (k & KEY_START)  btns &= ~(1 << 3);
 
     g_joypad_buttons = btns;
     g_joypad_dpad = dpad;
@@ -873,10 +930,6 @@ bool gb_platform_poll_events(GBContext *ctx)
     return true;
 }
 
-uint8_t gb_platform_get_joypad(void)
-{
-    return g_joypad_buttons & g_joypad_dpad;
-}
 
 void gb_platform_set_title(const char *title) { (void)title; }
 
