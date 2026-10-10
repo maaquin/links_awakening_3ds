@@ -41,7 +41,8 @@ Actualmente el proyecto se encuentra en desarrollo temprano.
 - [x] Ejecución en hardware real
 - [x] Carga de ROM desde la SD
 - [ ] Interfaz de segunda pantalla
-- [ ] Sistema de inventario/equipamiento
+- [x] Sistema de inventario/equipamiento
+- [x] Uso de X e Y como botones de acción
 - [ ] Mundo continuo
 - [ ] 3D estereoscópico
 - [ ] Pulido y optimización
