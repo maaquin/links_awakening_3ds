@@ -14,11 +14,15 @@
 #include "asset_bg_menu.h"
 #include "asset_btn_equip.h"
 #include "asset_grid_items.h"
+#include "asset_ui_quest_circle.h"
+#include "asset_ui_quest_slots.h"
 
 C3D_Tex g_tex_bg;
 C3D_Tex g_tex_btn_equip;
 C3D_Tex g_tex_grid;
 C3D_Tex g_tex_items;
+C3D_Tex g_tex_quest_circle;
+C3D_Tex g_tex_quest_slots;
 
 void ui_draw_sub_sprite(C3D_Tex *tex, float x, float y, float w, float h, 
                         float src_x, float src_y, float src_w, float src_h)
@@ -96,6 +100,8 @@ void ui_textures_init(void)
     load_embedded_png(bg_menu_png, bg_menu_png_len, &g_tex_bg);
     load_embedded_png(grid_items_png, grid_items_png_len, &g_tex_grid);
     load_embedded_png(btn_equip_png, btn_equip_png_len, &g_tex_btn_equip);
+    load_embedded_png(ui_quest_circle_png, ui_quest_circle_png_len, &g_tex_quest_circle);
+    load_embedded_png(ui_quest_slots_png, ui_quest_slots_png_len, &g_tex_quest_slots);
 }
 
 void ui_draw_sprite(C3D_Tex *tex, float x, float y, float w, float h, float orig_w, float orig_h)

@@ -20,10 +20,9 @@ int debug_get_vbo_offset(void);
 #define WRAM_SWORD_LEVEL 0xDB4E
 #define WRAM_SEASHELLS 0xDB5F
 #define WRAM_INSTRUMENTS_START 0xDB65
-#define WRAM_TUNIC_COLOR 0xDB6F
-#define WRAM_HEART_PIECES 0xDB5C
 #define WRAM_MAX_HEARTS 0xDB5B
 
+// items del inventario
 #define ITEM_SWORD 0x01
 #define ITEM_BOMBS 0x02
 #define ITEM_BRACELET 0x03
@@ -37,9 +36,26 @@ int debug_get_vbo_offset(void);
 #define ITEM_SHOVEL 0x0B
 #define ITEM_POWDER 0x0C
 
+// contador de items
 #define WRAM_BOMBS_COUNT 0xDB4D
 #define WRAM_ARROWS_COUNT 0xDB45
 #define WRAM_POWDER_COUNT 0xDB4C
+
+// información para equipo
+#define WRAM_FLIPPERS 0xDB3E     // 0x01 = Aletas obtenidas
+#define WRAM_TRADE_ITEM 0xDB0E   // Objeto de intercambio activo (0x01 - 0x0E)
+#define WRAM_RUPEES_H 0xDB5D     // Rupias (centenas)
+#define WRAM_RUPEES_L 0xDB5E     // Rupias (decenas y unidades)
+#define WRAM_PHOTOS_COUNT 0xDB71 // Flags de fotos tomadas
+#define WRAM_TUNIC_COLOR 0xDB6F
+#define WRAM_HEART_PIECES 0xDB5C
+
+// llaves de mazmorra
+#define WRAM_KEY_TAIL 0xDB10
+#define WRAM_KEY_SLIME 0xDB11
+#define WRAM_KEY_ANGLER 0xDB12
+#define WRAM_KEY_FACE 0xDB13
+#define WRAM_KEY_BIRD 0xDB14
 
 bool hotswap_is_active(void);
 uint8_t hotswap_get_backup_b(void);
@@ -164,6 +180,17 @@ static void draw_item_ammo(GBContext *ctx, uint8_t item_id, float x, float y)
         // Texto dorado pequeño en la esquina inferior derecha del recuadro
         debug_printf_ex(x + 18.0f, y + 20.0f, 0.8f, 0.85f, 0.80f, 0.53f, "%02d", display_val);
     }
+}
+
+static void draw_atlas_slot(int slot, float x, float y, float size)
+{
+    if (slot < 0 || slot >= 64)
+        return;
+    int col = slot % 8;
+    int row = slot / 8;
+    float src_x = col * 16.0f;
+    float src_y = row * 16.0f;
+    ui_draw_sub_sprite(&g_tex_items, x, y, size, size, src_x, src_y, 16.0f, 16.0f);
 }
 
 void inventory_menu_init(void)
@@ -474,22 +501,22 @@ void inventory_menu_render(GBContext *ctx)
     // ==========================================
     if (g_active_tab == TAB_ITEMS)
     {
-        // 3. Grid central centrado al píxel (239x79)
+        // Grid central centrado al píxel (239x79)
         ui_draw_sprite(&g_tex_grid, 40.5f, 70.0f, 239.0f, 79.0f, 239.0f, 79.0f);
 
-        // 4. Corchetes de botones
+        // Corchetes de botones
         ui_draw_sprite(&g_tex_btn_equip, g_slot_equip_b.x, g_slot_equip_b.y, g_slot_equip_b.w, g_slot_equip_b.h, (float)g_tex_btn_equip.width, (float)g_tex_btn_equip.height);
         ui_draw_sprite(&g_tex_btn_equip, g_slot_equip_a.x, g_slot_equip_a.y, g_slot_equip_a.w, g_slot_equip_a.h, (float)g_tex_btn_equip.width, (float)g_tex_btn_equip.height);
         ui_draw_sprite(&g_tex_btn_equip, g_slot_equip_x.x, g_slot_equip_x.y, g_slot_equip_x.w, g_slot_equip_x.h, (float)g_tex_btn_equip.width, (float)g_tex_btn_equip.height);
         ui_draw_sprite(&g_tex_btn_equip, g_slot_equip_y.x, g_slot_equip_y.y, g_slot_equip_y.w, g_slot_equip_y.h, (float)g_tex_btn_equip.width, (float)g_tex_btn_equip.height);
 
-        // 5. Letras X, Y, B y A más grandes (escala 2.0 = 16x16 px) al pie del corchete
+        // Letras X, Y, B y A más grandes (escala 2.0 = 16x16 px) al pie del corchete
         debug_printf_ex(g_slot_equip_b.x - 13.0f, g_slot_equip_b.y, 1.3f, col_r, col_g, col_b, "B");
         debug_printf_ex(g_slot_equip_a.x - 13.0f, g_slot_equip_a.y, 1.3f, col_r, col_g, col_b, "A");
         debug_printf_ex(g_slot_equip_x.x - 13.0f, g_slot_equip_x.y, 1.3f, col_r, col_g, col_b, "X");
         debug_printf_ex(g_slot_equip_y.x - 13.0f, g_slot_equip_y.y, 1.3f, col_r, col_g, col_b, "Y");
 
-        // 1. Ítems equipados dentro de los corchetes (centrados dentro de los 62x62 px)
+        // Ítems equipados dentro de los corchetes (centrados dentro de los 62x62 px)
         // Centrado exacto en los botones X, Y, B y A
         uint8_t eq_b = hotswap_is_active() ? hotswap_get_backup_b() : gb_read8(ctx, WRAM_EQUIP_SLOT_B);
         uint8_t eq_a = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
@@ -508,7 +535,7 @@ void inventory_menu_render(GBContext *ctx)
             draw_item_icon(eq_y, g_slot_equip_y.x + 4.0f, g_slot_equip_y.y, 32.0f);
         draw_item_ammo(ctx, eq_y, g_slot_equip_y.x + 4.0f, g_slot_equip_y.y);
 
-        // 2. Ítems de las 10 casillas (centrados dentro de cada celda de 48x39 px)
+        // Ítems de las 10 casillas (centrados dentro de cada celda de 48x39 px)
 
         for (int i = 0; i < 10; i++)
         {
@@ -520,10 +547,142 @@ void inventory_menu_render(GBContext *ctx)
             }
         }
 
-        // 3. Ítem arrastrado con el Stylus (centrado bajo la punta del lápiz)
+        for (int i = 0; i < 10; i++)
+        {
+            uint8_t test_id = i + 1; // Genera IDs del 0x01 al 0x0C consecutivamente
+            draw_item_icon(test_id, g_slots[i].x + 8.0f, g_slots[i].y + 4.0f, 32.0f);
+        }
+
+        // Ítem arrastrado con el Stylus (centrado bajo la punta del lápiz)
         if (g_drag.active)
         {
             draw_item_icon(g_drag.item_id, g_drag.cur_x - 16.0f, g_drag.cur_y - 16.0f, 32.0f);
         }
+    }
+
+    // ==========================================
+    // PESTAÑA 2: EQUIPO
+    // ==========================================
+    else if (g_active_tab == TAB_QUEST)
+    {
+        // Círculo centrado (128x128)
+        ui_draw_sprite(&g_tex_quest_circle, 96.0f, 60.0f, 128.0f, 128.0f, 128.0f, 128.0f);
+
+        // Grid lateral (47x159)
+        ui_draw_sprite(&g_tex_quest_slots, 25.0f, 50.0f, 47.0f, 159.0f, 47.0f, 159.0f);
+
+        // -------------------------------------------------------------
+        // columna izquierda
+        // -------------------------------------------------------------
+        // Aletas y Trade Item
+        uint8_t has_flippers = gb_read8(ctx, WRAM_FLIPPERS);
+        if (has_flippers)
+        {
+            draw_atlas_slot(11, 37.0f, 57.0f, 26.0f);
+        }
+
+        uint8_t trade_item = gb_read8(ctx, 0xDB0E);
+
+        // Si tiene desde el Moño (2) hasta la Lupa (14 / 0x0E):
+        if (trade_item >= 2 && trade_item <= 14)
+        {
+            int slot = 24 + (trade_item - 2); // 0x02 -> Slot 24 (Moño), 0x0E -> Slot 36 (Lupa)
+            draw_atlas_slot(slot, 37.0f, 97.0f, 26.0f);
+        }
+        else if (trade_item == 1)
+        {
+            draw_atlas_slot(61, 37.0f, 97.0f, 26.0f);
+        }
+
+        // Slot 3: Medicina Secreta de Tracy (Slot 17)
+        uint8_t has_medicine = gb_read8(ctx, 0xDB4C);
+        if (has_medicine != 0x00)
+        {
+            draw_atlas_slot(17, 37.0f, 137.0f, 24.0f);
+        }
+
+        // Slot 4: Caracola Marina (Slot 16) + Contador numérico
+        uint8_t seashells = gb_read8(ctx, 0xDB5F);
+        if (seashells > 0)
+        {
+            draw_atlas_slot(16, 26.0f, 177.0f, 20.0f);
+            debug_printf_ex(46.0f, 181.0f, 1.0f, col_r, col_g, col_b, "%02d", seashells);
+        }
+
+        // -------------------------------------------------------------
+        // parte central
+        // -------------------------------------------------------------
+
+        // instrumentos
+        uint8_t instruments = gb_read8(ctx, WRAM_INSTRUMENTS_START);
+
+        static const float s_inst_positions[8][2] = {
+            {147.0f, 65.0f},  // 1. Violonchelo (N)
+            {180.0f, 78.0f},  // 2. Cuerno (NE)
+            {193.0f, 111.0f}, // 3. Campana (E)
+            {180.0f, 144.0f}, // 4. Arpa (SE)
+            {147.0f, 158.0f}, // 5. Marimba (S)
+            {114.0f, 144.0f}, // 6. Triángulo (SO)
+            {101.0f, 111.0f}, // 7. Órgano (O)
+            {114.0f, 78.0f}   // 8. Tambor (NO)
+        };
+
+        // llaves de mazmorra
+        const uint16_t key_addrs[5] = {
+            WRAM_KEY_TAIL, WRAM_KEY_SLIME, WRAM_KEY_ANGLER, WRAM_KEY_FACE, WRAM_KEY_BIRD};
+
+        float key_size = 22.0f;
+        float key_step = 24.0f;    // Espaciado entre llaves
+        float key_base_x = 101.0f; // Centrado exacto horizontal (320 px)
+        float key_y = 192.0f;      // 4 px más arriba para separarlas del marco inferior
+
+        for (int k = 0; k < 5; k++)
+        {
+            if (gb_read8(ctx, key_addrs[k]))
+            {
+                draw_atlas_slot(46 + k, key_base_x + (k * key_step), key_y, key_size);
+            }
+        }
+
+        // -------------------------------------------------------------
+        // columna derecha
+        // -------------------------------------------------------------
+        float right_x = 290.0f;
+
+        // 1. Rupia (Slot 52)
+        uint8_t rup_h = gb_read8(ctx, WRAM_RUPEES_H);
+        uint8_t rup_l = gb_read8(ctx, WRAM_RUPEES_L);
+        int rupees = ((rup_h & 0x0F) * 100) + (((rup_l >> 4) & 0x0F) * 10) + (rup_l & 0x0F);
+        draw_atlas_slot(52, right_x - 40.0f, 58.0f, 20.0f);
+        debug_printf_ex(right_x - 23.0f, 58.0f, 1.1f, col_r, col_g, col_b, "%03d", rupees);
+
+        // 2. Túnica (Slot 57)
+        uint8_t tunic_type = gb_read8(ctx, 0xDC0F); // 1 = Verde, 2 = Azul, 3 = Roja
+
+        // Si aún no ha entrado al Color Dungeon el valor puede ser 0 o 1
+        int tunic_slot = 57; // Slot 57: Túnica verde base
+        if (tunic_type == 2)
+        {
+            tunic_slot = 58; // azul
+        }
+        else if (tunic_type == 3)
+        {
+            tunic_slot = 59; // rojo
+        }
+
+        draw_atlas_slot(tunic_slot, right_x - 36.0f, 80.0f, 28.0f);
+
+        // 3. Cuartos de Corazón (Slots 53 a 56 según el valor actual)
+        uint8_t hearts = gb_read8(ctx, WRAM_HEART_PIECES) & 0x03;
+        draw_atlas_slot(53 + hearts, right_x - 34.0f, 120.0f, 24.0f);
+
+        // 4. Álbum de Fotos (Slot 60)
+        uint8_t photos_data = gb_read8(ctx, WRAM_PHOTOS_COUNT);
+        int photo_count = 0;
+        for (int b = 0; b < 8; b++)
+            if (photos_data & (1 << b))
+                photo_count++;
+        draw_atlas_slot(60, right_x - 34.0f, 155.0f, 24.0f);
+        debug_printf_ex(right_x - 41.0f, 183.0f, 1.0f, col_r, col_g, col_b, "%02d/12", photo_count);
     }
 }
