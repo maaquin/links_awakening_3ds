@@ -16,6 +16,8 @@
 #include "asset_grid_items.h"
 #include "asset_ui_quest_circle.h"
 #include "asset_ui_quest_slots.h"
+#include "asset_fog.h"
+#include "asset_map_frame.h"
 
 C3D_Tex g_tex_bg;
 C3D_Tex g_tex_btn_equip;
@@ -23,6 +25,8 @@ C3D_Tex g_tex_grid;
 C3D_Tex g_tex_items;
 C3D_Tex g_tex_quest_circle;
 C3D_Tex g_tex_quest_slots;
+C3D_Tex g_tex_fog;
+C3D_Tex g_tex_map_frame;
 
 void ui_draw_sub_sprite(C3D_Tex *tex, float x, float y, float w, float h, 
                         float src_x, float src_y, float src_w, float src_h)
@@ -102,6 +106,8 @@ void ui_textures_init(void)
     load_embedded_png(btn_equip_png, btn_equip_png_len, &g_tex_btn_equip);
     load_embedded_png(ui_quest_circle_png, ui_quest_circle_png_len, &g_tex_quest_circle);
     load_embedded_png(ui_quest_slots_png, ui_quest_slots_png_len, &g_tex_quest_slots);
+    load_embedded_png(fog_png, fog_png_len, &g_tex_fog);
+    load_embedded_png(map_frame_png, map_frame_png_len, &g_tex_map_frame);
 }
 
 void ui_draw_sprite(C3D_Tex *tex, float x, float y, float w, float h, float orig_w, float orig_h)

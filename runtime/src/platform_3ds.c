@@ -113,13 +113,13 @@ void debug_push_textured_rect(float x, float y, float w, float h, float u0, floa
 
     Vertex *v = &g_vbo_debug[g_debug_vbo_offset];
     // Color blanco {1,1,1,1} para no teñir la textura
-    v[0] = (Vertex){{x,     y,     0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u0, v0}};
-    v[1] = (Vertex){{x + w, y,     0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u1, v0}};
-    v[2] = (Vertex){{x,     y + h, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u0, v1}};
+    v[0] = (Vertex){{x, y, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u0, v0}};
+    v[1] = (Vertex){{x + w, y, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u1, v0}};
+    v[2] = (Vertex){{x, y + h, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u0, v1}};
 
-    v[3] = (Vertex){{x + w, y,     0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u1, v0}};
+    v[3] = (Vertex){{x + w, y, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u1, v0}};
     v[4] = (Vertex){{x + w, y + h, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u1, v1}};
-    v[5] = (Vertex){{x,     y + h, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u0, v1}};
+    v[5] = (Vertex){{x, y + h, 0.5f}, {1.0f, 1.0f, 1.0f, 1.0f}, {u0, v1}};
 
     g_debug_vbo_offset += 6;
 }
@@ -159,8 +159,8 @@ void debug_flush_textured_rects(int start_offset)
     C3D_CullFace(GPU_CULL_NONE);
     C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_ALL);
 
-    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, 
-                   GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA, 
+    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
+                   GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA,
                    GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA);
 
     C3D_TexEnv *env = C3D_GetTexEnv(0);
@@ -264,7 +264,8 @@ void debug_printf_ex(float x, float y, float scale, float r, float g, float b, c
     va_end(args);
 
     int len = strlen(buf);
-    if (len == 0) return;
+    if (len == 0)
+        return;
 
     C3D_TexEnv *env = C3D_GetTexEnv(0);
     C3D_TexEnvInit(env);
@@ -274,18 +275,24 @@ void debug_printf_ex(float x, float y, float scale, float r, float g, float b, c
     Vertex *text_vbo = &g_vbo_debug[g_debug_vbo_offset];
     int total_vertices = 0;
 
-    for (int i = 0; i < len; i++) {
+    for (int i = 0; i < len; i++)
+    {
         unsigned char c = (unsigned char)buf[i];
-        if (c > 127) c = 32;
+        if (c > 127)
+            c = 32;
 
         float char_x = x + (i * 8.0f * scale);
         float char_y = y;
 
-        for (int row = 0; row < 8; row++) {
+        for (int row = 0; row < 8; row++)
+        {
             uint8_t bits = g_font_8x8[c][row];
-            for (int col = 0; col < 8; col++) {
-                if (bits & (1 << col)) {
-                    if (g_debug_vbo_offset + total_vertices + 6 > 32768) goto draw;
+            for (int col = 0; col < 8; col++)
+            {
+                if (bits & (1 << col))
+                {
+                    if (g_debug_vbo_offset + total_vertices + 6 > 32768)
+                        goto draw;
 
                     float px0 = char_x + (col * scale);
                     float px1 = px0 + scale;
@@ -309,7 +316,8 @@ void debug_printf_ex(float x, float y, float scale, float r, float g, float b, c
     }
 
 draw:
-    if (total_vertices > 0) {
+    if (total_vertices > 0)
+    {
         GSPGPU_FlushDataCache(text_vbo, total_vertices * sizeof(Vertex));
         C3D_BufInfo *bufInfo = C3D_GetBufInfo();
         BufInfo_Init(bufInfo);
@@ -642,6 +650,9 @@ void gb_platform_render_frame(const uint32_t *framebuffer)
 
     C3D_FrameBegin(0);
 
+    // reseteo de buffer
+    g_debug_vbo_offset = 0;
+
     // pantalla superior
     C3D_FrameDrawOn(g_target_top);
     C3D_RenderTargetClear(g_target_top, C3D_CLEAR_ALL, 0x181818FF, 0);
@@ -667,22 +678,28 @@ void gb_platform_render_frame(const uint32_t *framebuffer)
 
     if (g_game_paused)
     {
-        // 1. Activar mezcla alpha para el oscurecido
+        // 1. Configurar TexEnv para usar el color del vértice (sin textura)
+        C3D_TexEnv *env = C3D_GetTexEnv(0);
+        C3D_TexEnvInit(env);
+        C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
+        C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+
+        // 2. Activar mezcla Alpha
         C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
                        GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA,
                        GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA);
 
-        // 2. Dibujar rectángulo negro semitransparente sobre los 400x240 completos
-        // (Alpha a 0.6f para un oscurecido sutil y legible)
+        // 3. Capturar el offset antes de empujar el rectángulo
+        int pause_rect_offset = debug_get_vbo_offset();
         debug_push_rect(0.0f, 0.0f, 400.0f, 240.0f, 0.0f, 0.0f, 0.0f, 0.6f);
-        debug_flush_rects(g_debug_vbo_offset - 6);
+        debug_flush_rects(pause_rect_offset);
 
-        // 3. Restaurar modo opaco estándar para el texto
+        // 4. Restaurar Alpha para el texto de debug
         C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
                        GPU_ONE, GPU_ZERO,
                        GPU_ONE, GPU_ZERO);
 
-        // 4. Texto centrado en pantalla superior (400x240)
+        // 5. Dibujar texto PAUSA
         debug_printf(175.0f, 115.0f, "PAUSA");
     }
 
@@ -692,9 +709,6 @@ void gb_platform_render_frame(const uint32_t *framebuffer)
     // 1. Limpiar SIEMPRE la pantalla inferior (fondo azul oscuro o negro)
     C3D_RenderTargetClear(g_target_bottom, C3D_CLEAR_ALL, 0x102040FF, 0);
     C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, g_uLoc_mvp, &g_proj_bottom);
-
-    // 2. Reiniciar el offset del VBO para este frame
-    g_debug_vbo_offset = 0;
 
     if (g_show_debug)
     {
@@ -789,12 +803,12 @@ void gb_platform_register_context(GBContext *ctx)
 
 // sistema de botones x e y
 #define WRAM_INV_ITEMS_START 0xDB02
-#define WRAM_ITEM_B          0xDB00
-#define WRAM_SLOT_X          (WRAM_INV_ITEMS_START + 10) // 0xDB0C
-#define WRAM_SLOT_Y          (WRAM_INV_ITEMS_START + 11) // 0xDB0D
+#define WRAM_ITEM_B 0xDB00
+#define WRAM_SLOT_X (WRAM_INV_ITEMS_START + 10) // 0xDB0C
+#define WRAM_SLOT_Y (WRAM_INV_ITEMS_START + 11) // 0xDB0D
 
 static uint8_t s_backup_item_b = 0x00;
-static bool    s_hotswap_active = false;
+static bool s_hotswap_active = false;
 static uint8_t s_active_hotswap_btn = 0; // 1 = X, 2 = Y
 
 bool hotswap_is_active(void)
@@ -910,19 +924,26 @@ bool gb_platform_poll_events(GBContext *ctx)
 
     uint8_t btns = 0xFF, dpad = 0xFF;
 
-    if (k & (KEY_DRIGHT | KEY_CPAD_RIGHT)) dpad &= ~(1 << 0);
-    if (k & (KEY_DLEFT | KEY_CPAD_LEFT))   dpad &= ~(1 << 1);
-    if (k & (KEY_DUP | KEY_CPAD_UP))       dpad &= ~(1 << 2);
-    if (k & (KEY_DDOWN | KEY_CPAD_DOWN))   dpad &= ~(1 << 3);
+    if (k & (KEY_DRIGHT | KEY_CPAD_RIGHT))
+        dpad &= ~(1 << 0);
+    if (k & (KEY_DLEFT | KEY_CPAD_LEFT))
+        dpad &= ~(1 << 1);
+    if (k & (KEY_DUP | KEY_CPAD_UP))
+        dpad &= ~(1 << 2);
+    if (k & (KEY_DDOWN | KEY_CPAD_DOWN))
+        dpad &= ~(1 << 3);
 
-    if (k & KEY_A) btns &= ~(1 << 0);
+    if (k & KEY_A)
+        btns &= ~(1 << 0);
 
     // B se activa si se presiona B físico O si el hot-swap está activo (manteniendo X o Y)
     if ((k & KEY_B) || s_hotswap_active)
         btns &= ~(1 << 1);
 
-    if (k & KEY_SELECT) btns &= ~(1 << 2);
-    if (k & KEY_START)  btns &= ~(1 << 3);
+    if (k & KEY_SELECT)
+        btns &= ~(1 << 2);
+    if (k & KEY_START)
+        btns &= ~(1 << 3);
 
     g_joypad_buttons = btns;
     g_joypad_dpad = dpad;
@@ -930,7 +951,6 @@ bool gb_platform_poll_events(GBContext *ctx)
     inventory_menu_update(g_ctx);
     return true;
 }
-
 
 void gb_platform_set_title(const char *title) { (void)title; }
 

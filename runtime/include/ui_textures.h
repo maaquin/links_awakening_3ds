@@ -10,6 +10,8 @@ extern C3D_Tex g_tex_btn_equip;
 extern C3D_Tex g_tex_items;
 extern C3D_Tex g_tex_quest_circle;
 extern C3D_Tex g_tex_quest_slots;
+extern C3D_Tex g_tex_fog;
+extern C3D_Tex g_tex_map_frame;
 
 extern C3D_Tex g_tex_items;
 

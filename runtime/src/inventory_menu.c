@@ -1,10 +1,13 @@
 #include "inventory_menu.h"
+#include "ui_textures.h"
+#include "gbrt.h"
+#include "platform_sdl.h"
+
 #include <citro3d.h>
 #include <stdint.h>
 #include <3ds.h>
 #include <stdio.h>
 #include <string.h>
-#include "ui_textures.h"
 
 uint8_t gb_read8(GBContext *ctx, uint16_t addr);
 void gb_write8(GBContext *ctx, uint16_t addr, uint8_t value);
@@ -312,14 +315,89 @@ static int s_inspect_y = 0; // Fila (0 a 7)
 // Textura completa precompuesta en RAM
 extern C3D_Tex g_tex_overworld_map;
 
-void render_overworld_map(void *ctx)
+void render_overworld_map(GBContext *ctx)
 {
-    const float map_size = 176.0f;
-    const float start_x  = 72.0f;
-    const float start_y  = 44.0f;
+    if (!ctx || !ctx->wram)
+        return;
 
-    // 3. Textura de Koholint encima
+    const float map_size  = 160.0f;
+    const float start_x   = 72.0f;
+    const float start_y   = 51.0f;
+    const float cell_size = 10.0f; // 160 / 16
+
+    // koholint
     ui_draw_sub_sprite(&g_tex_overworld_map, start_x, start_y, map_size, map_size, 0.0f, 0.0f, 256.0f, 256.0f);
+
+    // niebla
+    C3D_TexBind(0, &g_tex_fog);
+    int fog_start = debug_get_vbo_offset();
+
+    const float png_w = 22.0f;
+    const float png_h = 22.0f;
+    float u0 = 0.0f;
+    float v0 = 1.0f;
+    float u1 = png_w / (float)g_tex_fog.width;
+    float v1 = 1.0f - (png_h / (float)g_tex_fog.height);
+
+    for (int r = 0; r < 256; r++)
+    {
+        uint8_t room_flags = ctx->wram[0x1800 + r];
+        bool visited = (room_flags != 0);
+
+        if (!visited)
+        {
+            int c_col = r % 16;
+            int c_row = r / 16;
+            float fx = start_x + (c_col * cell_size);
+            float fy = start_y + (c_row * cell_size);
+
+            debug_push_textured_rect(fx, fy, cell_size, cell_size, u0, v0, u1, v1);
+        }
+    }
+
+    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
+                   GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA,
+                   GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA);
+
+    debug_flush_textured_rects(fog_start);
+
+    C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
+                   GPU_ONE, GPU_ZERO,
+                   GPU_ONE, GPU_ZERO);
+
+    // marco
+    ui_draw_sprite(&g_tex_map_frame, start_x - 5.0f, start_y - 5.0f, map_size + 11.0f, map_size + 11.0f, 188.0f, 188.0f);
+
+    // link
+    uint8_t room = ctx->hram[0x76];
+    int col = room % 16;
+    int row = room / 16;
+
+    float cell_x = start_x + (col * cell_size);
+    float cell_y = start_y + (row * cell_size);
+
+    static int frame_counter = 0;
+    frame_counter++;
+
+    if ((frame_counter / 30) % 2 == 0)
+    {
+        int marker_offset = debug_get_vbo_offset();
+        float px = cell_x + 2.0f;
+        float py = cell_y + 2.0f;
+
+        debug_push_rect(px + 2.0f, py + 0.0f, 3.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        debug_push_rect(px + 1.0f, py + 1.0f, 5.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        debug_push_rect(px + 0.0f, py + 2.0f, 7.0f, 3.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        debug_push_rect(px + 1.0f, py + 5.0f, 5.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+        debug_push_rect(px + 2.0f, py + 6.0f, 3.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+
+        const float yr = 1.0f, yg = 0.85f, yb = 0.10f;
+        debug_push_rect(px + 2.0f, py + 1.0f, 3.0f, 1.0f, yr, yg, yb, 1.0f);
+        debug_push_rect(px + 1.0f, py + 2.0f, 5.0f, 3.0f, yr, yg, yb, 1.0f);
+        debug_push_rect(px + 2.0f, py + 5.0f, 3.0f, 1.0f, yr, yg, yb, 1.0f);
+
+        debug_flush_rects(marker_offset);
+    }
 }
 
 void inventory_menu_update(GBContext *ctx)

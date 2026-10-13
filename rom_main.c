@@ -49,10 +49,14 @@ int main(int argc, char *argv[])
     // 5. Bucle de emulación/recompilación
     while (gb_platform_poll_events(ctx))
     {
-
         if (!gb_platform_is_paused())
         {
             gb_run_frame(ctx);
+        }
+        else
+        {
+            // Solo en pausa frenamos el bucle al ritmo de la pantalla (60 Hz)
+            gspWaitForVBlank();
         }
 
         // Renderizar si el emulador completó un frame O si estamos en pausa
@@ -64,7 +68,6 @@ int main(int argc, char *argv[])
                 gb_platform_render_frame(fb);
             }
 
-            // Solo resetear los flags internos del core si la CPU realmente corrió un frame
             if (ctx->frame_done)
             {
                 gb_reset_frame(ctx);
