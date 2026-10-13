@@ -735,6 +735,7 @@ bool gb_platform_init(int scale)
     inventory_menu_init();
     ui_textures_init();
     rom_extract_item_textures(ROM_SD_PATH);
+    rom_extract_map_tiles(ROM_SD_PATH);
     return true;
 }
 

@@ -6,6 +6,9 @@
 #include <string.h>
 #include "ui_textures.h"
 
+void debug_printf(float x, float y, const char *fmt, ...);
+void debug_printf_ex(float x, float y, float scale, float r, float g, float b, const char *fmt, ...);
+
 // =============================================================================
 // UBICACIONES CONFIRMADAS EN LA ROM (LADX)
 // =============================================================================
@@ -27,6 +30,215 @@
 #define ROM_TRADE_ITEMS_BASE 0x30400 // Ítems de Intercambio (16x16 px = 64 bytes c/u)
 #define ROM_EQUIP_ITEMS_BASE 0x307E0 // Ítems Equipables (8x16 px = 32 bytes c/u)
 #define ROM_YOSHI_TRADE_ITEM 0x309A0 // Yoshi está separado de los trade
+
+// =============================================================================
+// Mapa
+// =============================================================================
+#define ROM_MAP_TILES_BASE 0x338a0 // Banco con los tiles del Overworld
+#define MAP_TILES_COUNT 128
+
+// Colores base comunes
+#define MAP_COL_BG 0xFFF8A8FF      // Color 0: Crema / Amarillo claro (fondo)
+#define MAP_COL_OUTLINE 0x381808FF // Color 3: Café muy oscuro (bordes y líneas)
+
+C3D_Tex g_tex_map_tiles;
+C3D_Tex g_tex_overworld_map;
+static uint32_t s_raw_tiles[128][8 * 8];
+
+// 1. Paleta Verde (Bosque Misterioso, praderas y copas de árboles)
+static const uint32_t s_pal_map_green[4] = {
+    MAP_COL_BG,
+    0x58B828FF, // Verde claro / brillo
+    0x087818FF, // Verde oscuro
+    MAP_COL_OUTLINE};
+
+// 2. Paleta Naranja / Rojiza (Montañas Tal Tal, Cordillera y Desierto Yarna)
+static const uint32_t s_pal_map_orange[4] = {
+    MAP_COL_BG,
+    0xE87828FF, // Naranja
+    0xA83810FF, // Café terracota / tejas
+    MAP_COL_OUTLINE};
+
+// 3. Paleta Morada (Cementerio y estructuras oscuras)
+static const uint32_t s_pal_map_purple[4] = {
+    MAP_COL_BG,
+    0x9888C8FF, // Lavanda / morado claro
+    0x604888FF, // Morado oscuro
+    MAP_COL_OUTLINE};
+
+// 4. Paleta Azul (Océano, ríos, cascadas y lagos)
+static const uint32_t s_pal_map_blue[4] = {
+    MAP_COL_BG,
+    0x5890F8FF, // Azul claro / olas
+    0x1848C8FF, // Azul profundo
+    MAP_COL_OUTLINE};
+
+// Tabla de acceso rápido por índice (0: Verde, 1: Naranja, 2: Morado, 3: Azul)
+static const uint32_t *s_map_palettes[4] = {
+    s_pal_map_green,
+    s_pal_map_orange,
+    s_pal_map_purple,
+    s_pal_map_blue};
+
+// Decodifica un tile (8x8 px, 2bpp) normal o con volteo horizontal (flip_x)
+static void decode_tile_pal_ex(const uint8_t *tile_data, uint32_t *dst, int stride, const uint32_t *palette, bool flip_x)
+{
+    for (int y = 0; y < 8; y++)
+    {
+        uint8_t b1 = tile_data[y * 2 + 0];
+        uint8_t b2 = tile_data[y * 2 + 1];
+        for (int x = 0; x < 8; x++)
+        {
+            int bit = flip_x ? x : (7 - x);
+            int idx = ((b1 >> bit) & 1) | (((b2 >> bit) & 1) << 1);
+            dst[y * stride + x] = palette[idx];
+        }
+    }
+}
+
+static inline void decode_tile_pal(const uint8_t *tile_data, uint32_t *dst, int stride, const uint32_t *palette)
+{
+    decode_tile_pal_ex(tile_data, dst, stride, palette, false);
+}
+
+static uint8_t s_tile_indices[MAP_TILES_COUNT][64]; // 128 tiles * 64 pixels
+
+// Decodifica los dos planos de bits a valores 0, 1, 2, 3
+static void decode_tile_raw(const uint8_t *src, uint8_t *dst)
+{
+    for (int y = 0; y < 8; y++)
+    {
+        uint8_t low = src[y * 2];
+        uint8_t high = src[y * 2 + 1];
+        for (int x = 0; x < 8; x++)
+        {
+            int bit = 7 - x;
+            uint8_t val = ((low >> bit) & 1) | (((high >> bit) & 1) << 1);
+            dst[y * 8 + x] = val;
+        }
+    }
+}
+
+// Índices de paleta: 0 = Verde, 1 = Naranja, 2 = Morado, 3 = Azul
+enum
+{
+    PAL_GREEN = 0,
+    PAL_ORANGE = 1,
+    PAL_PURPLE = 2,
+    PAL_BLUE = 3
+};
+
+static const uint8_t s_overworld_map_ids[256] = {
+    45, 112, 114, 39, 40, 41, 42, 43, 44, 112, 5, 114, 112, 114, 112, 114,
+    107, 107, 108, 55, 56, 57, 58, 59, 60, 109, 110, 106, 109, 111, 107, 108,
+    70, 70, 71, 72, 73, 74, 0, 0, 105, 70, 70, 70, 70, 70, 70, 102,
+    5, 0, 78, 79, 80, 0, 0, 5, 104, 115, 115, 115, 115, 115, 115, 5,
+    6, 7, 6, 7, 0, 5, 100, 101, 10, 11, 12, 13, 46, 47, 47, 48,
+    22, 23, 22, 23, 0, 0, 116, 117, 26, 27, 28, 29, 62, 38, 38, 64,
+    6, 7, 6, 7, 1, 5, 4, 4, 14, 15, 16, 29, 62, 38, 38, 64,
+    22, 23, 22, 23, 1, 1, 4, 4, 30, 31, 32, 33, 78, 79, 79, 80,
+    1, 5, 18, 19, 70, 70, 70, 70, 0, 0, 5, 29, 20, 21, 0, 0,
+    1, 1, 34, 35, 0, 0, 0, 0, 0, 0, 0, 99, 36, 37, 0, 0,
+    18, 19, 18, 19, 1, 1, 46, 48, 0, 0, 0, 17, 51, 52, 52, 53,
+    34, 35, 34, 35, 1, 92, 103, 80, 0, 0, 95, 96, 67, 68, 68, 69,
+    3, 3, 3, 3, 1, 1, 1, 1, 46, 47, 97, 0, 5, 5, 90, 90,
+    3, 3, 3, 3, 1, 1, 5, 1, 62, 54, 64, 0, 5, 5, 90, 90,
+    3, 3, 3, 5, 3, 3, 1, 1, 78, 4, 80, 0, 92, 93, 90, 90,
+    9, 24, 24, 24, 24, 8, 5, 1, 98, 49, 0, 0, 0, 0, 90, 90};
+
+// Asigna qué paleta usa cada una de las 256 celdas
+static const uint8_t s_overworld_map_palettes[256] = {
+    // Filas 0-1: Montañas Tal Tal (Naranja)
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    // Filas 2-3: Lagos superiores y canales
+    1, 1, 3, 3, 3, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+    2, 0, 3, 3, 3, 0, 0, 2, 3, 3, 3, 3, 3, 3, 3, 2,
+    // Filas 4-7: Bosque (Verde izq), Kanalet (Naranja centro), Bahía (Azul der)
+    0, 0, 0, 0, 0, 1, 2, 2, 1, 1, 1, 3, 3, 3, 3, 3,
+    0, 0, 0, 0, 0, 0, 2, 2, 1, 1, 1, 3, 3, 3, 3, 3,
+    0, 0, 0, 0, 0, 2, 2, 2, 1, 1, 1, 3, 3, 3, 3, 3,
+    0, 0, 0, 0, 0, 0, 2, 2, 1, 1, 1, 3, 3, 3, 3, 3,
+    // Filas 8-11: Aldea Mabe (Morado/Naranja), Pradera y Río
+    0, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 3, 1, 1, 0, 0,
+    0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 3, 1, 1, 0, 0,
+    1, 1, 2, 2, 0, 0, 3, 3, 0, 0, 0, 3, 1, 1, 1, 1,
+    1, 1, 2, 2, 0, 3, 3, 3, 0, 0, 3, 3, 1, 1, 1, 1,
+    // Filas 12-15: Costas (Azul), Praderas y Desierto Yarna (Naranja der)
+    1, 1, 1, 1, 0, 0, 0, 0, 3, 3, 3, 0, 2, 3, 1, 1,
+    1, 1, 1, 1, 0, 0, 1, 0, 3, 3, 3, 0, 0, 1, 1, 1,
+    1, 1, 1, 3, 1, 1, 0, 0, 3, 3, 3, 0, 3, 3, 1, 1,
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 0, 0, 1, 1};
+
+bool rom_extract_map_tiles(const char *rom_path)
+{
+    FILE *f = fopen(rom_path, "rb");
+    if (!f)
+        return false;
+
+    // 1. Extraer los tiles gráficos sin paleta fija (índices 2bpp puros)
+    fseek(f, ROM_MAP_TILES_BASE, SEEK_SET);
+    uint8_t tile_buf[16];
+    for (int t = 0; t < MAP_TILES_COUNT; t++)
+    {
+        if (fread(tile_buf, 1, 16, f) != 16)
+            break;
+        decode_tile_raw(tile_buf, s_tile_indices[t]);
+    }
+
+    // 2. Crear el lienzo en RAM lineal
+    uint32_t *map_canvas = (uint32_t *)linearAlloc(256 * 256 * sizeof(uint32_t));
+    if (!map_canvas)
+    {
+        fclose(f);
+        return false;
+    }
+    memset(map_canvas, 0, 256 * 256 * sizeof(uint32_t));
+
+    // 2. Composición de las 16x16 celdas con sus IDs y Paletas respectivas
+    for (int row = 0; row < 16; row++)
+    {
+        for (int col = 0; col < 16; col++)
+        {
+            int cell_idx = row * 16 + col;
+            uint8_t tid = s_overworld_map_ids[cell_idx];
+            uint8_t pal_idx = s_overworld_map_palettes[cell_idx];
+            const uint32_t *active_palette = s_map_palettes[pal_idx];
+
+            int cell_x = col * 16;
+            int cell_y = row * 16;
+
+            // Escalar 2x aplicando la paleta de la celda
+            for (int y = 0; y < 16; y++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    uint8_t color_idx = s_tile_indices[tid][(y / 2) * 8 + (x / 2)];
+                    map_canvas[(cell_y + y) * 256 + (cell_x + x)] = active_palette[color_idx];
+                }
+            }
+        }
+    }
+
+    fclose(f);
+
+    // 3. Subir la textura a la GPU de la 3DS
+    GSPGPU_FlushDataCache(map_canvas, 256 * 256 * sizeof(uint32_t));
+
+    C3D_TexInit(&g_tex_overworld_map, 256, 256, GPU_RGBA8);
+    C3D_TexSetFilter(&g_tex_overworld_map, GPU_NEAREST, GPU_NEAREST);
+    g_tex_overworld_map.data = linearAlloc(256 * 256 * sizeof(uint32_t));
+
+    GX_DisplayTransfer((u32 *)map_canvas, GX_BUFFER_DIM(256, 256),
+                       (u32 *)g_tex_overworld_map.data, GX_BUFFER_DIM(256, 256),
+                       GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(1) | GX_TRANSFER_RAW_COPY(0) |
+                           GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+                           GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+    gspWaitForPPF();
+
+    linearFree(map_canvas);
+    return true;
+}
 
 // =============================================================================
 // PALETAS AUTÉNTICAS GBC PARA PICA200 (RGBA8 little-endian: 0xRRGGBBAA)
@@ -275,27 +487,6 @@ static void fill_internal_holes(uint32_t *base_ptr, int w, int h, int stride)
             }
         }
     }
-}
-
-// Decodifica un tile (8x8 px, 2bpp) normal o con volteo horizontal (flip_x)
-static void decode_tile_pal_ex(const uint8_t *tile_data, uint32_t *dst, int stride, const uint32_t *palette, bool flip_x)
-{
-    for (int y = 0; y < 8; y++)
-    {
-        uint8_t b1 = tile_data[y * 2 + 0];
-        uint8_t b2 = tile_data[y * 2 + 1];
-        for (int x = 0; x < 8; x++)
-        {
-            int bit = flip_x ? x : (7 - x);
-            int idx = ((b1 >> bit) & 1) | (((b2 >> bit) & 1) << 1);
-            dst[y * stride + x] = palette[idx];
-        }
-    }
-}
-
-static inline void decode_tile_pal(const uint8_t *tile_data, uint32_t *dst, int stride, const uint32_t *palette)
-{
-    decode_tile_pal_ex(tile_data, dst, stride, palette, false);
 }
 
 // Ensambla una mitad izquierda y una mitad derecha volteada en un slot de 16x16

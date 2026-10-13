@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <citro3d.h>
 
 typedef struct GBContext GBContext;
 
@@ -10,5 +11,6 @@ void inventory_menu_init(void);
 void inventory_menu_update(GBContext *ctx);
 void inventory_menu_render(GBContext *ctx);
 void inventory_menu_toggle_map(void);
+extern C3D_Tex g_tex_map_tiles;
 
 #endif

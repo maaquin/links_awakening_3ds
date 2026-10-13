@@ -1,5 +1,6 @@
 #include "inventory_menu.h"
 #include <citro3d.h>
+#include <stdint.h>
 #include <3ds.h>
 #include <stdio.h>
 #include <string.h>
@@ -305,6 +306,22 @@ static void write_to_source_slot(GBContext *ctx, int source_slot, uint8_t value)
     }
 }
 
+static int s_inspect_x = 0; // Columna (0 a 15)
+static int s_inspect_y = 0; // Fila (0 a 7)
+
+// Textura completa precompuesta en RAM
+extern C3D_Tex g_tex_overworld_map;
+
+void render_overworld_map(void *ctx)
+{
+    const float map_size = 176.0f;
+    const float start_x  = 72.0f;
+    const float start_y  = 44.0f;
+
+    // 3. Textura de Koholint encima
+    ui_draw_sub_sprite(&g_tex_overworld_map, start_x, start_y, map_size, map_size, 0.0f, 0.0f, 256.0f, 256.0f);
+}
+
 void inventory_menu_update(GBContext *ctx)
 {
     if (!ctx)
@@ -547,11 +564,11 @@ void inventory_menu_render(GBContext *ctx)
             }
         }
 
-        for (int i = 0; i < 10; i++)
+        /*for (int i = 0; i < 10; i++)
         {
             uint8_t test_id = i + 1; // Genera IDs del 0x01 al 0x0C consecutivamente
             draw_item_icon(test_id, g_slots[i].x + 8.0f, g_slots[i].y + 4.0f, 32.0f);
-        }
+        }*/
 
         // Ítem arrastrado con el Stylus (centrado bajo la punta del lápiz)
         if (g_drag.active)
@@ -684,5 +701,13 @@ void inventory_menu_render(GBContext *ctx)
                 photo_count++;
         draw_atlas_slot(60, right_x - 34.0f, 155.0f, 24.0f);
         debug_printf_ex(right_x - 41.0f, 183.0f, 1.0f, col_r, col_g, col_b, "%02d/12", photo_count);
+    }
+
+    // ==========================================
+    // PESTAÑA 3: MAPA
+    // ==========================================
+    else if (g_active_tab == TAB_MAP)
+    {
+        render_overworld_map(ctx);
     }
 }
