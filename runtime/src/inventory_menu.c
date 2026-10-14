@@ -315,14 +315,72 @@ static int s_inspect_y = 0; // Fila (0 a 7)
 // Textura completa precompuesta en RAM
 extern C3D_Tex g_tex_overworld_map;
 
+bool is_in_dungeon(GBContext *ctx, uint8_t *out_dungeon_id)
+{
+    if (!ctx || !ctx->wram)
+        return false;
+
+    // 0x1B9F (wIsIndoor): 1 = dentro, 0 = exterior
+    uint8_t is_indoor = ctx->wram[0x1B9F];
+    if (is_indoor == 0)
+        return false;
+
+    // 0x1B9C (wDungeonId): 0x00 a 0x08 son mazmorras reales
+    uint8_t dungeon_id = ctx->wram[0x1B9C];
+    if (dungeon_id <= 0x08)
+    {
+        if (out_dungeon_id)
+            *out_dungeon_id = dungeon_id;
+        return true;
+    }
+
+    return false;
+}
+
+static const char *s_dungeon_names[] = {
+    "NIVEL 1: CUEVA TAIL",
+    "NIVEL 2: GRUTA BOTELLA",
+    "NIVEL 3: CAVERNA LLAVE",
+    "NIVEL 4: TUNEL ANGLER",
+    "NIVEL 5: FAUCES SILURO",
+    "NIVEL 6: TEMPLO ROSTRO",
+    "NIVEL 7: TORRE AGUILA",
+    "NIVEL 8: ROCA TORTUGA",
+    "MAZMORRA COLOR"};
+
+void render_dungeon_map(GBContext *ctx, uint8_t dungeon_id)
+{
+    const float map_size = 160.0f;
+    const float start_x = 72.0f;
+    const float start_y = 51.0f;
+
+    // 1. Marco decorativo
+    ui_draw_sprite(&g_tex_map_frame, start_x - 5.0f, start_y - 5.0f,
+                   map_size + 11.0f, map_size + 11.0f, 188.0f, 188.0f);
+
+    // 2. Fondo interior
+    int bg_offset = debug_get_vbo_offset();
+    debug_push_rect(start_x, start_y, map_size, map_size, 0.08f, 0.08f, 0.12f, 1.0f);
+    debug_flush_rects(bg_offset);
+
+    // 3. Título de la mazmorra
+    const char *name = (dungeon_id <= 8) ? s_dungeon_names[dungeon_id] : "DESCONOCIDO";
+    debug_printf(start_x + 10.0f, start_y + 20.0f, "%s", name);
+
+    // 4. Datos de depuración
+    uint8_t room = ctx->hram[0x76];
+    debug_printf(start_x + 10.0f, start_y + 45.0f, "DUNGEON ID: %d", dungeon_id);
+    debug_printf(start_x + 10.0f, start_y + 60.0f, "SALA ACTUAL: 0x%02X", room);
+}
+
 void render_overworld_map(GBContext *ctx)
 {
     if (!ctx || !ctx->wram)
         return;
 
-    const float map_size  = 160.0f;
-    const float start_x   = 72.0f;
-    const float start_y   = 51.0f;
+    const float map_size = 160.0f;
+    const float start_x = 72.0f;
+    const float start_y = 51.0f;
     const float cell_size = 10.0f; // 160 / 16
 
     // koholint
@@ -786,6 +844,14 @@ void inventory_menu_render(GBContext *ctx)
     // ==========================================
     else if (g_active_tab == TAB_MAP)
     {
-        render_overworld_map(ctx);
+        uint8_t dungeon_id = 0;
+        if (is_in_dungeon(ctx, &dungeon_id))
+        {
+            render_dungeon_map(ctx, dungeon_id);
+        }
+        else
+        {
+            render_overworld_map(ctx);
+        }
     }
 }

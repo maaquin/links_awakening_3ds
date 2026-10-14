@@ -41,6 +41,17 @@ void debug_printf_ex(float x, float y, float scale, float r, float g, float b, c
 #define MAP_COL_BG 0xFFF8A8FF      // Color 0: Crema / Amarillo claro (fondo)
 #define MAP_COL_OUTLINE 0x381808FF // Color 3: Café muy oscuro (bordes y líneas)
 
+// elementos de mazmorra
+#define ROM_DUNGEON_COMPASS_BASE     0x4BD00 // Brújula (8x16 px = 32 bytes)
+#define ROM_DUNGEON_BEAK_BASE        0x4BD20 // Pico de piedra (8x16 px = 32 bytes)
+#define ROM_DUNGEON_SMALL_KEY_BASE   0x4BD80 // Llave pequeña (8x16 px = 32 bytes)
+#define ROM_DUNGEON_BOSS_KEY_BASE    0x4BDC0 // Llave de Jefe/Pesadilla (8x16 px = 32 bytes)
+
+#define SLOT_COMPASS     59
+#define SLOT_STONE_BEAK  60
+#define SLOT_SMALL_KEY   61
+#define SLOT_BOSS_KEY    62
+
 C3D_Tex g_tex_map_tiles;
 C3D_Tex g_tex_overworld_map;
 static uint32_t s_raw_tiles[128][8 * 8];
@@ -735,6 +746,54 @@ bool rom_extract_item_textures(const char *rom_path)
             // Rellena la panza y mejillas de Yoshi (ancho 16, alto 16)
             fill_internal_holes(base_ptr, 16, 16, 128);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Ítems de Mazmorra (Slots 61 a 62)
+    // -------------------------------------------------------------------------
+
+    // Slot 61: Brújula (8x16 px centrado o alineado a la izquierda en 16x16)
+    fseek(f, ROM_TOADSTOOL_BASE, SEEK_SET);
+    if (fread(buffer, 1, 32, f) == 32)
+    {
+        int px = (61 % 8) * 16 + 4;
+        int py = (61 / 8) * 16;
+        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 128, s_pal_blue_steel);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, s_pal_blue_steel);
+    }
+
+    // Slot 62: Pico de Piedra
+    fseek(f, ROM_TOADSTOOL_BASE, SEEK_SET);
+    if (fread(buffer, 1, 32, f) == 32)
+    {
+        int px = (62 % 8) * 16 + 4;
+        int py = (62 / 8) * 16;
+        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 128, s_pal_gold_wood);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, s_pal_gold_wood);
+    }
+
+    // Slot 63: Llave Pequeña
+    fseek(f, ROM_TOADSTOOL_BASE, SEEK_SET);
+    if (fread(buffer, 1, 32, f) == 32)
+    {
+        int px = (63 % 8) * 16 + 4;
+        int py = (63 / 8) * 16;
+        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 128, s_pal_gold_wood);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, s_pal_gold_wood);
+    }
+
+    // Slot 64: Llave de Jefe (Nightmare Key)
+    fseek(f, ROM_TOADSTOOL_BASE, SEEK_SET);
+    if (fread(buffer, 1, 32, f) == 32)
+    {
+        int px = (64 % 8) * 16 + 4;
+        int py = (64 / 8) * 16;
+        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 128, s_pal_red_fire);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, s_pal_red_fire);
     }
 
     fclose(f);

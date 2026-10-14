@@ -23,16 +23,10 @@
 
 // contexto del juego
 static GBContext *g_ctx = NULL;
-bool g_game_paused = false;
 
 void gb_platform_set_context(GBContext *ctx)
 {
     g_ctx = ctx;
-}
-
-bool gb_platform_is_paused(void)
-{
-    return g_game_paused;
 }
 
 // fps y letras
@@ -574,7 +568,7 @@ static void xb_on_audio_sample(GBContext *ctx, int16_t left, int16_t right)
 
 /* --- Save data ---------------------------------------------------------- */
 
-#define SAVE_DIR "sdmc:/3ds/linksawakening"
+#define SAVE_DIR "sdmc:/3ds/links_awakening"
 
 static void save_path(char *out, size_t n, const char *rom, const char *suffix)
 {
@@ -675,33 +669,6 @@ void gb_platform_render_frame(const uint32_t *framebuffer)
     BufInfo_Add(bufInfo, g_vbo_data, sizeof(Vertex), 3, 0x210);
 
     C3D_DrawArrays(GPU_TRIANGLES, 0, 6);
-
-    if (g_game_paused)
-    {
-        // 1. Configurar TexEnv para usar el color del vértice (sin textura)
-        C3D_TexEnv *env = C3D_GetTexEnv(0);
-        C3D_TexEnvInit(env);
-        C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
-        C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
-
-        // 2. Activar mezcla Alpha
-        C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
-                       GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA,
-                       GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA);
-
-        // 3. Capturar el offset antes de empujar el rectángulo
-        int pause_rect_offset = debug_get_vbo_offset();
-        debug_push_rect(0.0f, 0.0f, 400.0f, 240.0f, 0.0f, 0.0f, 0.0f, 0.6f);
-        debug_flush_rects(pause_rect_offset);
-
-        // 4. Restaurar Alpha para el texto de debug
-        C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
-                       GPU_ONE, GPU_ZERO,
-                       GPU_ONE, GPU_ZERO);
-
-        // 5. Dibujar texto PAUSA
-        debug_printf(175.0f, 115.0f, "PAUSA");
-    }
 
     // pantalla inferior
     C3D_FrameDrawOn(g_target_bottom);
@@ -807,6 +774,8 @@ void gb_platform_register_context(GBContext *ctx)
 #define WRAM_SLOT_X (WRAM_INV_ITEMS_START + 10) // 0xDB0C
 #define WRAM_SLOT_Y (WRAM_INV_ITEMS_START + 11) // 0xDB0D
 
+static int s_trigger_save_menu_frames = 0;
+
 static uint8_t s_backup_item_b = 0x00;
 static bool s_hotswap_active = false;
 static uint8_t s_active_hotswap_btn = 0; // 1 = X, 2 = Y
@@ -843,6 +812,16 @@ bool gb_platform_poll_events(GBContext *ctx)
         kDown &= ~(KEY_START | KEY_SELECT);
     }
 
+    if ((k & KEY_R) && (k & KEY_L))
+    {
+        ctx->wram[0x1B9F] = 0x01; // wIsIndoor: 1 = Interiores / Mazmorra
+        ctx->wram[0x1B9C] = 0x00; // wDungeonId: 0 = Cueva Tail (Nivel 1)
+        ctx->hram[0x76] = 0x27;   // hRoom: Sala de entrada interior de Cueva Tail
+
+        // Forzar recarga de sala y gráficos de interior
+        ctx->wram[0x115D] = 0x01; // Transición de sala
+    }
+
     // 2. Determinar si estamos en menús de inicio (Título, Ranuras, Nombre)
     uint8_t game_state = (g_ctx && g_ctx->wram) ? g_ctx->wram[0x1B95] : 0x00;
     bool is_title_or_intro = (game_state <= 0x03);
@@ -852,7 +831,7 @@ bool gb_platform_poll_events(GBContext *ctx)
     {
         if (!is_title_or_intro)
         {
-            g_game_paused = !g_game_paused;
+            s_trigger_save_menu_frames = 3;
             k &= ~KEY_START;
         }
     }
@@ -924,6 +903,7 @@ bool gb_platform_poll_events(GBContext *ctx)
 
     uint8_t btns = 0xFF, dpad = 0xFF;
 
+    // 1. D-Pad físico
     if (k & (KEY_DRIGHT | KEY_CPAD_RIGHT))
         dpad &= ~(1 << 0);
     if (k & (KEY_DLEFT | KEY_CPAD_LEFT))
@@ -933,18 +913,24 @@ bool gb_platform_poll_events(GBContext *ctx)
     if (k & (KEY_DDOWN | KEY_CPAD_DOWN))
         dpad &= ~(1 << 3);
 
+    // 2. Botones físicos y hot-swap
     if (k & KEY_A)
         btns &= ~(1 << 0);
-
-    // B se activa si se presiona B físico O si el hot-swap está activo (manteniendo X o Y)
     if ((k & KEY_B) || s_hotswap_active)
         btns &= ~(1 << 1);
-
     if (k & KEY_SELECT)
         btns &= ~(1 << 2);
     if (k & KEY_START)
         btns &= ~(1 << 3);
 
+    // 3. Inyección forzada de A + B + SELECT + START si se pulsó START
+    if (s_trigger_save_menu_frames > 0)
+    {
+        s_trigger_save_menu_frames--;
+        btns &= ~0x0F; // Forzar A (bit 0), B (bit 1), Select (bit 2) y Start (bit 3) en 0
+    }
+
+    // 4. Asignación definitiva
     g_joypad_buttons = btns;
     g_joypad_dpad = dpad;
 

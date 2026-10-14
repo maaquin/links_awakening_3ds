@@ -49,18 +49,10 @@ int main(int argc, char *argv[])
     // 5. Bucle de emulación/recompilación
     while (gb_platform_poll_events(ctx))
     {
-        if (!gb_platform_is_paused())
-        {
-            gb_run_frame(ctx);
-        }
-        else
-        {
-            // Solo en pausa frenamos el bucle al ritmo de la pantalla (60 Hz)
-            gspWaitForVBlank();
-        }
+        gb_run_frame(ctx);
 
-        // Renderizar si el emulador completó un frame O si estamos en pausa
-        if (ctx->frame_done || gb_platform_is_paused())
+        // Renderizar si el emulador completó un frame O
+        if (ctx->frame_done)
         {
             const uint32_t *fb = gb_get_framebuffer(ctx);
             if (fb)

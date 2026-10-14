@@ -72,7 +72,7 @@ void gb_context_destroy(GBContext* ctx) {
     if (!ctx) return;
     
     /* Save RAM before destroying if available */
-    if (ctx->eram && ctx->ram_enabled && ctx->callbacks.save_battery_ram) {
+    if (ctx->eram && ctx->callbacks.save_battery_ram) {
         gb_context_save_ram(ctx);
     }
     
@@ -418,8 +418,13 @@ uint8_t gb_read8(GBContext* ctx, uint16_t addr) {
 
 void gb_write8(GBContext* ctx, uint16_t addr, uint8_t value) {
     /* During OAM DMA, only HRAM (0xFF80-0xFFFE) is writable */
-    if (ctx->dma.active && !(addr >= 0xFF80 && addr < 0xFFFF)) {
-        return;  /* Bus conflict - write ignored */
+    if (addr < 0x2000) {
+        uint8_t old = ctx->ram_enabled;
+        ctx->ram_enabled = ((value & 0x0F) == 0x0A);
+        // Si la RAM estaba activa y el juego la acaba de cerrar tras guardar, volcar a SD:
+        if (old && !ctx->ram_enabled) {
+            gb_context_save_ram(ctx);
+        }
     }
     
     /* MBC Write Handling */
