@@ -22,7 +22,7 @@ int debug_get_vbo_offset(void);
 #define WRAM_INV_ITEMS_START 0xDB02
 #define WRAM_SHIELD_LEVEL 0xDB44
 #define WRAM_SWORD_LEVEL 0xDB4E
-#define WRAM_SEASHELLS 0xDB5F
+#define WRAM_SEASHELLS 0x1B4F
 #define WRAM_INSTRUMENTS_START 0xDB65
 #define WRAM_MAX_HEARTS 0xDB5B
 
@@ -39,20 +39,24 @@ int debug_get_vbo_offset(void);
 #define ITEM_FEATHER 0x0A
 #define ITEM_SHOVEL 0x0B
 #define ITEM_POWDER 0x0C
+#define ITEM_BUMERANG 0x0D
 
 // contador de items
 #define WRAM_BOMBS_COUNT 0xDB4D
 #define WRAM_ARROWS_COUNT 0xDB45
-#define WRAM_POWDER_COUNT 0xDB4C
+#define WRAM_POWDER_COUNT 0x1B4C
+#define WRAM_SEASHELLS_COUNT 0x1B4E
 
 // información para equipo
-#define WRAM_FLIPPERS 0xDB3E     // 0x01 = Aletas obtenidas
-#define WRAM_TRADE_ITEM 0xDB0E   // Objeto de intercambio activo (0x01 - 0x0E)
-#define WRAM_RUPEES_H 0xDB5D     // Rupias (centenas)
-#define WRAM_RUPEES_L 0xDB5E     // Rupias (decenas y unidades)
-#define WRAM_PHOTOS_COUNT 0xDB71 // Flags de fotos tomadas
+#define WRAM_FLIPPERS 0xDB3E            // 0x01 = Aletas obtenidas
+#define WRAM_TRADE_ITEM 0xDB0E          // Objeto de intercambio activo (0x01 - 0x0E)
+#define WRAM_RUPEES_H 0xDB5D            // Rupias (centenas)
+#define WRAM_RUPEES_L 0xDB5E            // Rupias (decenas y unidades)
+#define WRAM_INIT_PHOTOS_COUNT 0x1B74   // Flags de fotos tomadas
+#define WRAM_FINISH_PHOTOS_COUNT 0x1B75 // Flags de fotos tomadas
 #define WRAM_TUNIC_COLOR 0xDB6F
 #define WRAM_HEART_PIECES 0xDB5C
+#define WRAM_MEDICINE 0xDB4D
 
 // llaves de mazmorra
 #define WRAM_KEY_TAIL 0xDB10
@@ -171,7 +175,7 @@ static void draw_item_ammo(GBContext *ctx, uint8_t item_id, float x, float y)
     }
     else if (item_id == ITEM_POWDER)
     {
-        count = gb_read8(ctx, WRAM_POWDER_COUNT);
+        count = ctx->wram[WRAM_POWDER_COUNT];
         has_ammo = true;
     }
 
@@ -244,21 +248,21 @@ void inventory_menu_init(void)
 }
 
 static const int s_wram_id_to_atlas_index[16] = {
-    [0x00] = -1,         // Vacío
-    [ITEM_SWORD] = 1,    // 0x01 -> Espada (índice 2)
-    [ITEM_BOMBS] = 2,    // 0x02 -> Bomba (índice 0)
-    [ITEM_BRACELET] = 3, // 0x03 -> Brazalete (índice 1)
-    [ITEM_SHIELD] = 4,   // 0x04 -> Escudo (índice 3)
-    [ITEM_BOW] = 5,      // 0x05 -> Arco (índice 4)
-    [ITEM_HOOKSHOT] = 6, // 0x06 -> Gancho (índice 5)
-    [ITEM_ROD] = 7,      // 0x07 -> Varita (índice 6)
-    [ITEM_BOOTS] = 8,    // 0x08 -> Botas (índice 12)
-    [ITEM_OCARINA] = 9,  // 0x09 -> Ocarina (índice 8)
-    [ITEM_FEATHER] = 10, // 0x0A -> Pluma (índice 9)
-    [ITEM_SHOVEL] = 11,  // 0x0B -> Pala (índice 11)
-    [ITEM_POWDER] = 12,  // 0x0C -> Polvos mágicos (índice 7)
-    [0x0D] = 18,         // Boomerang (índice 18)
-    [0x0E] = 16,         // Poción (índice 16)
+    [0x00] = -1,          // Vacío
+    [ITEM_BOMBS] = 1,     // 0x01 -> bomba (índice 2)
+    [ITEM_BRACELET] = 2,  // 0x02 -> brazalete (índice 0)
+    [ITEM_SWORD] = 3,     // 0x03 -> espada (índice 1)
+    [ITEM_SHIELD] = 4,    // 0x04 -> escudo (índice 3)
+    [ITEM_BOW] = 5,       // 0x05 -> arco (índice 4)
+    [ITEM_HOOKSHOT] = 6,  // 0x06 -> gancho (índice 5)
+    [ITEM_ROD] = 7,       // 0x07 -> varita (índice 6)
+    [ITEM_POWDER] = 8,    // 0x08 -> polvos mágicos (índice 12)
+    [ITEM_OCARINA] = 9,   // 0x09 -> ocarina (índice 8)
+    [ITEM_FEATHER] = 10,  // 0x0A -> pluma (índice 9)
+    [ITEM_SHOVEL] = 11,   // 0x0B -> pala (índice 11)
+    [ITEM_BOOTS] = 12,    // 0x0C -> botas (índice 12)
+    [ITEM_BUMERANG] = 17, // Boomerang (índice 17)
+    [0x0E] = 16,          // Poción (índice 16)
 };
 
 static void draw_item_icon(uint8_t item_id, float x, float y, float size)
@@ -624,6 +628,22 @@ void inventory_menu_update(GBContext *ctx)
     }
 }
 
+static void draw_slot_item(GBContext *ctx, uint8_t item, float x, float y, float size)
+{
+    if (item == 0x00)
+        return;
+
+    // Si es ITEM_POWDER pero no hay polvos fabricados, pintar el hongo (slot 51) sin munición
+    if (item == ITEM_POWDER && ctx->wram[WRAM_POWDER_COUNT] == 0)
+    {
+        draw_atlas_slot(51, x, y, size);
+        return;
+    }
+
+    draw_item_icon(item, x, y, size);
+    draw_item_ammo(ctx, item, x + 7, y);
+}
+
 void inventory_menu_render(GBContext *ctx)
 {
     if (!ctx)
@@ -669,38 +689,26 @@ void inventory_menu_render(GBContext *ctx)
         debug_printf_ex(g_slot_equip_x.x - 13.0f, g_slot_equip_x.y, 1.3f, col_r, col_g, col_b, "X");
         debug_printf_ex(g_slot_equip_y.x - 13.0f, g_slot_equip_y.y, 1.3f, col_r, col_g, col_b, "Y");
 
-        // Ítems equipados dentro de los corchetes (centrados dentro de los 62x62 px)
-        // Centrado exacto en los botones X, Y, B y A
+        // Ítems equipados
         uint8_t eq_b = hotswap_is_active() ? hotswap_get_backup_b() : gb_read8(ctx, WRAM_EQUIP_SLOT_B);
         uint8_t eq_a = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
         uint8_t eq_x = gb_read8(ctx, WRAM_INV_ITEMS_START + 10);
         uint8_t eq_y = gb_read8(ctx, WRAM_INV_ITEMS_START + 11);
-        if (eq_b != 0x00)
-            draw_item_icon(eq_b, g_slot_equip_b.x + 4.0f, g_slot_equip_b.y, 32.0f);
-        draw_item_ammo(ctx, eq_b, g_slot_equip_b.x + 4.0f, g_slot_equip_b.y);
-        if (eq_a != 0x00)
-            draw_item_icon(eq_a, g_slot_equip_a.x + 4.0f, g_slot_equip_a.y, 32.0f);
-        draw_item_ammo(ctx, eq_a, g_slot_equip_a.x + 4.0f, g_slot_equip_a.y);
-        if (eq_x != 0x00)
-            draw_item_icon(eq_x, g_slot_equip_x.x + 4.0f, g_slot_equip_x.y, 32.0f);
-        draw_item_ammo(ctx, eq_x, g_slot_equip_x.x + 4.0f, g_slot_equip_x.y);
-        if (eq_y != 0x00)
-            draw_item_icon(eq_y, g_slot_equip_y.x + 4.0f, g_slot_equip_y.y, 32.0f);
-        draw_item_ammo(ctx, eq_y, g_slot_equip_y.x + 4.0f, g_slot_equip_y.y);
+
+        draw_slot_item(ctx, eq_b, g_slot_equip_b.x + 4.0f, g_slot_equip_b.y, 32.0f);
+        draw_slot_item(ctx, eq_a, g_slot_equip_a.x + 4.0f, g_slot_equip_a.y, 32.0f);
+        draw_slot_item(ctx, eq_x, g_slot_equip_x.x + 4.0f, g_slot_equip_x.y, 32.0f);
+        draw_slot_item(ctx, eq_y, g_slot_equip_y.x + 4.0f, g_slot_equip_y.y, 32.0f);
 
         // Ítems de las 10 casillas (centrados dentro de cada celda de 48x39 px)
-
         for (int i = 0; i < 10; i++)
         {
             uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
-            if (item != 0x00)
-            {
-                draw_item_icon(item, g_slots[i].x + 8.0f, g_slots[i].y + 4.0f, 32.0f);
-                draw_item_ammo(ctx, item, g_slots[i].x + 8.0f, g_slots[i].y + 4.0f);
-            }
+            draw_slot_item(ctx, item, g_slots[i].x + 8.0f, g_slots[i].y + 4.0f, 32.0f);
         }
 
-        /*for (int i = 0; i < 10; i++)
+        /*
+        for (int i = 0; i < 10; i++)
         {
             uint8_t test_id = i + 1; // Genera IDs del 0x01 al 0x0C consecutivamente
             draw_item_icon(test_id, g_slots[i].x + 8.0f, g_slots[i].y + 4.0f, 32.0f);
@@ -709,8 +717,10 @@ void inventory_menu_render(GBContext *ctx)
         // Ítem arrastrado con el Stylus (centrado bajo la punta del lápiz)
         if (g_drag.active)
         {
-            draw_item_icon(g_drag.item_id, g_drag.cur_x - 16.0f, g_drag.cur_y - 16.0f, 32.0f);
+            draw_slot_item(ctx, g_drag.item_id, g_drag.cur_x - 16.0f, g_drag.cur_y - 16.0f, 32.0f);
         }
+
+        // testeo supremo
     }
 
     // ==========================================
@@ -727,7 +737,7 @@ void inventory_menu_render(GBContext *ctx)
         // -------------------------------------------------------------
         // columna izquierda
         // -------------------------------------------------------------
-        // Aletas y Trade Item
+        // aletas
         uint8_t has_flippers = gb_read8(ctx, WRAM_FLIPPERS);
         if (has_flippers)
         {
@@ -736,7 +746,7 @@ void inventory_menu_render(GBContext *ctx)
 
         uint8_t trade_item = gb_read8(ctx, 0xDB0E);
 
-        // Si tiene desde el Moño (2) hasta la Lupa (14 / 0x0E):
+        // trade item
         if (trade_item >= 2 && trade_item <= 14)
         {
             int slot = 24 + (trade_item - 2); // 0x02 -> Slot 24 (Moño), 0x0E -> Slot 36 (Lupa)
@@ -747,15 +757,15 @@ void inventory_menu_render(GBContext *ctx)
             draw_atlas_slot(61, 37.0f, 97.0f, 26.0f);
         }
 
-        // Slot 3: Medicina Secreta de Tracy (Slot 17)
-        uint8_t has_medicine = gb_read8(ctx, 0xDB4C);
+        // poción
+        uint8_t has_medicine = gb_read8(ctx, WRAM_MEDICINE);
         if (has_medicine != 0x00)
         {
             draw_atlas_slot(17, 37.0f, 137.0f, 24.0f);
         }
 
-        // Slot 4: Caracola Marina (Slot 16) + Contador numérico
-        uint8_t seashells = gb_read8(ctx, 0xDB5F);
+        // caracolas
+        uint8_t seashells = ctx->wram[WRAM_SEASHELLS_COUNT];
         if (seashells > 0)
         {
             draw_atlas_slot(16, 26.0f, 177.0f, 20.0f);
@@ -830,11 +840,14 @@ void inventory_menu_render(GBContext *ctx)
         draw_atlas_slot(53 + hearts, right_x - 34.0f, 120.0f, 24.0f);
 
         // 4. Álbum de Fotos (Slot 60)
-        uint8_t photos_data = gb_read8(ctx, WRAM_PHOTOS_COUNT);
+        uint16_t photo_flags = ctx->wram[WRAM_INIT_PHOTOS_COUNT] | (ctx->wram[WRAM_FINISH_PHOTOS_COUNT] << 8);
         int photo_count = 0;
-        for (int b = 0; b < 8; b++)
-            if (photos_data & (1 << b))
+
+        for (int i = 0; i < 12; i++)
+        {
+            if (photo_flags & (1 << i))
                 photo_count++;
+        }
         draw_atlas_slot(60, right_x - 34.0f, 155.0f, 24.0f);
         debug_printf_ex(right_x - 41.0f, 183.0f, 1.0f, col_r, col_g, col_b, "%02d/12", photo_count);
     }
