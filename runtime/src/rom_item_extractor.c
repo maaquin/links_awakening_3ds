@@ -42,15 +42,16 @@ void debug_printf_ex(float x, float y, float scale, float r, float g, float b, c
 #define MAP_COL_OUTLINE 0x381808FF // Color 3: Café muy oscuro (bordes y líneas)
 
 // elementos de mazmorra
-#define ROM_DUNGEON_COMPASS_BASE     0x4BD00 // Brújula (8x16 px = 32 bytes)
-#define ROM_DUNGEON_BEAK_BASE        0x4BD20 // Pico de piedra (8x16 px = 32 bytes)
-#define ROM_DUNGEON_SMALL_KEY_BASE   0x4BD80 // Llave pequeña (8x16 px = 32 bytes)
-#define ROM_DUNGEON_BOSS_KEY_BASE    0x4BDC0 // Llave de Jefe/Pesadilla (8x16 px = 32 bytes)
+#define ROM_DUNGEON_MAP_BASE         0x4BD00 // Mapa (Bloque 4, mitad izq)
+#define ROM_DUNGEON_COMPASS_BASE     0x4BD20 // Brújula (Bloque 4, mitad der)
+#define ROM_DUNGEON_BEAK_BASE        0x4BD40 // Pico de piedra (Bloque 5, mitad izq)
+#define ROM_DUNGEON_BOSS_KEY_BASE    0x4BD60 // Llave de Jefe (Bloque 5, mitad der)
+#define ROM_DUNGEON_SMALL_KEY_BASE   0x4BDA0 // Llave pequeña (Bloque 6, mitad der)
 
-#define SLOT_COMPASS     59
-#define SLOT_STONE_BEAK  60
-#define SLOT_SMALL_KEY   61
-#define SLOT_BOSS_KEY    62
+#define SLOT_COMPASS 59
+#define SLOT_STONE_BEAK 60
+#define SLOT_SMALL_KEY 61
+#define SLOT_BOSS_KEY 62
 
 C3D_Tex g_tex_map_tiles;
 C3D_Tex g_tex_overworld_map;
@@ -171,7 +172,7 @@ static const uint8_t s_overworld_map_palettes[256] = {
     0, 0, 0, 0, 0, 2, 2, 2, 1, 1, 1, 3, 3, 3, 3, 3,
     0, 0, 0, 0, 0, 0, 2, 2, 1, 1, 1, 3, 3, 3, 3, 3,
     // Filas 8-11: Aldea Mabe (Morado/Naranja), Pradera y Río
-    0, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 3, 1, 1, 0, 0,
+    0, 2, 1, 1, 1, 1, 1, 1, 0, 0, 0, 3, 1, 1, 0, 0,
     0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 3, 1, 1, 0, 0,
     1, 1, 2, 2, 0, 0, 3, 3, 0, 0, 0, 3, 1, 1, 1, 1,
     1, 1, 2, 2, 0, 3, 3, 3, 0, 0, 3, 3, 1, 1, 1, 1,
@@ -503,17 +504,17 @@ static void fill_internal_holes(uint32_t *base_ptr, int w, int h, int stride)
 // Ensambla una mitad izquierda y una mitad derecha volteada en un slot de 16x16
 static void assemble_heart_slot(uint32_t *linear_atlas, int slot, const uint8_t *left_half, const uint8_t *right_half)
 {
-    int px = (slot % 8) * 16;
-    int py = (slot / 8) * 16;
-    uint32_t *base = &linear_atlas[py * 128 + px];
+    int px = (slot % 16) * 16;
+    int py = (slot / 16) * 16;
+    uint32_t *base = &linear_atlas[py * 256 + px];
 
-    // Mitad izquierda (8x16 px)
-    decode_tile_pal(&left_half[0], base, 128, s_pal_heart_pieces);
-    decode_tile_pal(&left_half[16], base + (8 * 128), 128, s_pal_heart_pieces);
+    // Mitad izquierda (8x16 px) con salto de línea de 256
+    decode_tile_pal(&left_half[0], base, 256, s_pal_heart_pieces);
+    decode_tile_pal(&left_half[16], base + (8 * 256), 256, s_pal_heart_pieces);
 
-    // Mitad derecha con flip X (8x16 px)
-    decode_tile_pal_ex(&right_half[0], base + 8, 128, s_pal_heart_pieces, true);
-    decode_tile_pal_ex(&right_half[16], base + (8 * 128) + 8, 128, s_pal_heart_pieces, true);
+    // Mitad derecha con flip X (8x16 px) con salto de línea de 256
+    decode_tile_pal_ex(&right_half[0], base + 8, 256, s_pal_heart_pieces, true);
+    decode_tile_pal_ex(&right_half[16], base + (8 * 256) + 8, 256, s_pal_heart_pieces, true);
 }
 
 bool rom_extract_item_textures(const char *rom_path)
@@ -522,13 +523,14 @@ bool rom_extract_item_textures(const char *rom_path)
     if (!f)
         return false;
 
-    uint32_t *linear_atlas = (uint32_t *)linearAlloc(128 * 128 * sizeof(uint32_t));
+    // Asignación de 256x256 en formato RGBA8
+    uint32_t *linear_atlas = (uint32_t *)linearAlloc(256 * 256 * sizeof(uint32_t));
     if (!linear_atlas)
     {
         fclose(f);
         return false;
     }
-    memset(linear_atlas, 0, 128 * 128 * sizeof(uint32_t));
+    memset(linear_atlas, 0, 256 * 256 * sizeof(uint32_t));
 
     uint8_t buffer[64];
 
@@ -542,16 +544,16 @@ bool rom_extract_item_textures(const char *rom_path)
             break;
 
         const uint32_t *pal = get_equip_item_palette(i);
-        int px = (i % 8) * 16 + 4;
-        int py = (i / 8) * 16;
+        int px = (i % 16) * 16 + 4;
+        int py = (i / 16) * 16;
 
-        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
-        decode_tile_pal(&buffer[0], base_ptr, 128, pal);
-        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, pal);
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, pal);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, pal);
 
         if (i != 5)
         {
-            fill_internal_holes(base_ptr, 8, 16, 128);
+            fill_internal_holes(base_ptr, 8, 16, 256);
         }
     }
 
@@ -566,18 +568,18 @@ bool rom_extract_item_textures(const char *rom_path)
 
         int slot = 24 + i;
         const uint32_t *pal = get_equip_item_palette(slot);
-        int px = (slot % 8) * 16;
-        int py = (slot / 8) * 16;
+        int px = (slot % 16) * 16;
+        int py = (slot / 16) * 16;
 
-        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
-        decode_tile_pal(&buffer[0], base_ptr, 128, pal);
-        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, pal);
-        decode_tile_pal(&buffer[32], base_ptr + 8, 128, pal);
-        decode_tile_pal(&buffer[48], base_ptr + (8 * 128) + 8, 128, pal);
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, pal);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, pal);
+        decode_tile_pal(&buffer[32], base_ptr + 8, 256, pal);
+        decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, pal);
 
         if (slot != 34)
         {
-            fill_internal_holes(base_ptr, 16, 16, 128);
+            fill_internal_holes(base_ptr, 16, 16, 256);
         }
     }
 
@@ -593,14 +595,14 @@ bool rom_extract_item_textures(const char *rom_path)
         const uint32_t *pal = s_instrument_palettes[i];
 
         int slot = 38 + i;
-        int px = (slot % 8) * 16;
-        int py = (slot / 8) * 16;
+        int px = (slot % 16) * 16;
+        int py = (slot / 16) * 16;
 
-        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
-        decode_tile_pal(&buffer[0], base_ptr, 128, pal);
-        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, pal);
-        decode_tile_pal(&buffer[32], base_ptr + 8, 128, pal);
-        decode_tile_pal(&buffer[48], base_ptr + (8 * 128) + 8, 128, pal);
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, pal);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, pal);
+        decode_tile_pal(&buffer[32], base_ptr + 8, 256, pal);
+        decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, pal);
     }
 
     // =========================================================================
@@ -615,12 +617,12 @@ bool rom_extract_item_textures(const char *rom_path)
             break;
 
         int slot = 46 + i;
-        int px = (slot % 8) * 16 + 4;
-        int py = (slot / 8) * 16;
+        int px = (slot % 16) * 16 + 4;
+        int py = (slot / 16) * 16;
 
-        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
-        decode_tile_pal(&buffer[0], base_ptr, 128, s_pal_gold_wood);
-        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, s_pal_gold_wood);
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_gold_wood);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_gold_wood);
     }
 
     // =========================================================================
@@ -630,23 +632,23 @@ bool rom_extract_item_textures(const char *rom_path)
     fseek(f, ROM_TOADSTOOL_BASE, SEEK_SET);
     if (fread(buffer, 1, 32, f) == 32)
     {
-        int px = (51 % 8) * 16 + 4;
-        int py = (51 / 8) * 16;
-        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
-        decode_tile_pal(&buffer[0], base_ptr, 128, s_pal_red_fire);
-        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, s_pal_red_fire);
+        int px = (51 % 16) * 16 + 4;
+        int py = (51 / 16) * 16;
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_red_fire);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_red_fire);
     }
 
     {
         // Slot 52: Rupia del Menú (8x8 px) - Verde
-        int px = (52 % 8) * 16;
-        int py = (52 / 8) * 16;
+        int px = (52 % 16) * 16;
+        int py = (52 / 16) * 16;
         for (int y = 0; y < 8; y++)
         {
             for (int x = 0; x < 8; x++)
             {
                 uint8_t idx = s_sprite_rupee[y][x];
-                linear_atlas[(py + y) * 128 + (px + x)] = s_pal_tunic_green[idx];
+                linear_atlas[(py + y) * 256 + (px + x)] = s_pal_tunic_green[idx];
             }
         }
     }
@@ -672,42 +674,42 @@ bool rom_extract_item_textures(const char *rom_path)
     // =========================================================================
     // Slot 57: Túnica Verde (16x16 px)
     {
-        int px = (57 % 8) * 16;
-        int py = (57 / 8) * 16;
+        int px = (57 % 16) * 16;
+        int py = (57 / 16) * 16;
         for (int y = 0; y < 16; y++)
         {
             for (int x = 0; x < 16; x++)
             {
                 uint8_t idx = s_sprite_tunic[y][x];
-                linear_atlas[(py + y) * 128 + (px + x)] = s_pal_tunic_green[idx];
+                linear_atlas[(py + y) * 256 + (px + x)] = s_pal_tunic_green[idx];
             }
         }
     }
 
     // Slot 58: Túnica Azul (16x16 px)
     {
-        int px = (58 % 8) * 16;
-        int py = (58 / 8) * 16;
+        int px = (58 % 16) * 16;
+        int py = (58 / 16) * 16;
         for (int y = 0; y < 16; y++)
         {
             for (int x = 0; x < 16; x++)
             {
                 uint8_t idx = s_sprite_tunic[y][x];
-                linear_atlas[(py + y) * 128 + (px + x)] = s_pal_tunic_blue[idx];
+                linear_atlas[(py + y) * 256 + (px + x)] = s_pal_tunic_blue[idx];
             }
         }
     }
 
     // Slot 59: Túnica Roja (16x16 px)
     {
-        int px = (59 % 8) * 16;
-        int py = (59 / 8) * 16;
+        int px = (59 % 16) * 16;
+        int py = (59 / 16) * 16;
         for (int y = 0; y < 16; y++)
         {
             for (int x = 0; x < 16; x++)
             {
                 uint8_t idx = s_sprite_tunic[y][x];
-                linear_atlas[(py + y) * 128 + (px + x)] = s_pal_tunic_red[idx];
+                linear_atlas[(py + y) * 256 + (px + x)] = s_pal_tunic_red[idx];
             }
         }
     }
@@ -717,14 +719,14 @@ bool rom_extract_item_textures(const char *rom_path)
     // =========================================================================
     // Slot 60: Álbum de Fotos (16x16 px)
     {
-        int px = (60 % 8) * 16;
-        int py = (60 / 8) * 16;
+        int px = (60 % 16) * 16;
+        int py = (60 / 16) * 16;
         for (int y = 0; y < 16; y++)
         {
             for (int x = 0; x < 16; x++)
             {
                 uint8_t idx = s_sprite_album[y][x];
-                linear_atlas[(py + y) * 128 + (px + x)] = s_pal_photo_frame[idx];
+                linear_atlas[(py + y) * 256 + (px + x)] = s_pal_photo_frame[idx];
             }
         }
     }
@@ -735,76 +737,86 @@ bool rom_extract_item_textures(const char *rom_path)
         if (fread(buffer, 1, 64, f) == 64)
         {
             int slot = 61;
-            int px = (slot % 8) * 16;
-            int py = (slot / 8) * 16;
-            uint32_t *base_ptr = &linear_atlas[py * 128 + px];
-            decode_tile_pal(&buffer[0], base_ptr, 128, s_pal_green);
-            decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, s_pal_green);
-            decode_tile_pal(&buffer[32], base_ptr + 8, 128, s_pal_green);
-            decode_tile_pal(&buffer[48], base_ptr + (8 * 128) + 8, 128, s_pal_green);
+            int px = (slot % 16) * 16;
+            int py = (slot / 16) * 16;
+            uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+            decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_green);
+            decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_green);
+            decode_tile_pal(&buffer[32], base_ptr + 8, 256, s_pal_green);
+            decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, s_pal_green);
 
-            // Rellena la panza y mejillas de Yoshi (ancho 16, alto 16)
-            fill_internal_holes(base_ptr, 16, 16, 128);
+            fill_internal_holes(base_ptr, 16, 16, 256);
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Ítems de Mazmorra (Slots 61 a 62)
-    // -------------------------------------------------------------------------
-
-    // Slot 61: Brújula (8x16 px centrado o alineado a la izquierda en 16x16)
-    fseek(f, ROM_TOADSTOOL_BASE, SEEK_SET);
+    // =========================================================================
+    // 9. Ítems de Mazmorra (Slots 62 a 66)
+    // =========================================================================
+    // Slot 62: Brújula
+    fseek(f, ROM_DUNGEON_COMPASS_BASE, SEEK_SET);
     if (fread(buffer, 1, 32, f) == 32)
     {
-        int px = (61 % 8) * 16 + 4;
-        int py = (61 / 8) * 16;
-        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
-        decode_tile_pal(&buffer[0], base_ptr, 128, s_pal_blue_steel);
-        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, s_pal_blue_steel);
+        int px = (62 % 16) * 16 + 4;
+        int py = (62 / 16) * 16;
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_blue_steel);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_blue_steel);
     }
 
-    // Slot 62: Pico de Piedra
-    fseek(f, ROM_TOADSTOOL_BASE, SEEK_SET);
+    // Slot 63: Pico de Piedra
+    fseek(f, ROM_DUNGEON_BEAK_BASE, SEEK_SET);
     if (fread(buffer, 1, 32, f) == 32)
     {
-        int px = (62 % 8) * 16 + 4;
-        int py = (62 / 8) * 16;
-        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
-        decode_tile_pal(&buffer[0], base_ptr, 128, s_pal_gold_wood);
-        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, s_pal_gold_wood);
+        int px = (63 % 16) * 16 + 4;
+        int py = (63 / 16) * 16;
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_gold_wood);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_gold_wood);
     }
 
-    // Slot 63: Llave Pequeña
-    fseek(f, ROM_TOADSTOOL_BASE, SEEK_SET);
+    // Slot 64: Llave Pequeña
+    fseek(f, ROM_DUNGEON_SMALL_KEY_BASE, SEEK_SET);
     if (fread(buffer, 1, 32, f) == 32)
     {
-        int px = (63 % 8) * 16 + 4;
-        int py = (63 / 8) * 16;
-        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
-        decode_tile_pal(&buffer[0], base_ptr, 128, s_pal_gold_wood);
-        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, s_pal_gold_wood);
+        int px = (64 % 16) * 16 + 4;
+        int py = (64 / 16) * 16;
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_gold_wood);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_gold_wood);
     }
 
-    // Slot 64: Llave de Jefe (Nightmare Key)
-    fseek(f, ROM_TOADSTOOL_BASE, SEEK_SET);
+    // Slot 65: Llave de Jefe (Nightmare Key)
+    fseek(f, ROM_DUNGEON_BOSS_KEY_BASE, SEEK_SET);
     if (fread(buffer, 1, 32, f) == 32)
     {
-        int px = (64 % 8) * 16 + 4;
-        int py = (64 / 8) * 16;
-        uint32_t *base_ptr = &linear_atlas[py * 128 + px];
-        decode_tile_pal(&buffer[0], base_ptr, 128, s_pal_red_fire);
-        decode_tile_pal(&buffer[16], base_ptr + (8 * 128), 128, s_pal_red_fire);
+        int px = (65 % 16) * 16 + 4;
+        int py = (65 / 16) * 16;
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_red_fire);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_red_fire);
+    }
+
+    // Slot 66: Mapa físico
+    fseek(f, ROM_DUNGEON_MAP_BASE, SEEK_SET);
+    if (fread(buffer, 1, 32, f) == 32)
+    {
+        int px = (66 % 16) * 16 + 4;
+        int py = (66 / 16) * 16;
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_gold_wood);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_gold_wood);
     }
 
     fclose(f);
-    GSPGPU_FlushDataCache(linear_atlas, 128 * 128 * sizeof(uint32_t));
+    GSPGPU_FlushDataCache(linear_atlas, 256 * 256 * sizeof(uint32_t));
 
-    C3D_TexInit(&g_tex_items, 128, 128, GPU_RGBA8);
+    // Inicializar textura GPU a 256x256
+    C3D_TexInit(&g_tex_items, 256, 256, GPU_RGBA8);
     C3D_TexSetFilter(&g_tex_items, GPU_NEAREST, GPU_NEAREST);
-    g_tex_items.data = linearAlloc(128 * 128 * sizeof(uint32_t));
+    g_tex_items.data = linearAlloc(256 * 256 * sizeof(uint32_t));
 
-    GX_DisplayTransfer((u32 *)linear_atlas, GX_BUFFER_DIM(128, 128),
-                       (u32 *)g_tex_items.data, GX_BUFFER_DIM(128, 128),
+    GX_DisplayTransfer((u32 *)linear_atlas, GX_BUFFER_DIM(256, 256),
+                       (u32 *)g_tex_items.data, GX_BUFFER_DIM(256, 256),
                        GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(1) | GX_TRANSFER_RAW_COPY(0) |
                            GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) | GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGBA8) |
                            GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));

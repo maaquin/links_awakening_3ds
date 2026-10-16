@@ -192,12 +192,15 @@ static void draw_item_ammo(GBContext *ctx, uint8_t item_id, float x, float y)
 
 static void draw_atlas_slot(int slot, float x, float y, float size)
 {
-    if (slot < 0 || slot >= 64)
+    if (slot < 0 || slot >= 256)
         return;
-    int col = slot % 8;
-    int row = slot / 8;
+
+    int col = slot % 16;
+    int row = slot / 16;
+
     float src_x = col * 16.0f;
     float src_y = row * 16.0f;
+
     ui_draw_sub_sprite(&g_tex_items, x, y, size, size, src_x, src_y, 16.0f, 16.0f);
 }
 
@@ -274,9 +277,9 @@ static void draw_item_icon(uint8_t item_id, float x, float y, float size)
     if (atlas_idx < 0)
         return;
 
-    // Coordenadas del cuadro en la textura atlas de 128x128 (8 columnas x 16px)
-    int col = atlas_idx % 8;
-    int row = atlas_idx / 8;
+    // Coordenadas en la textura atlas de 256x256 (16 columnas x 16px)
+    int col = atlas_idx % 16;
+    int row = atlas_idx / 16;
 
     float src_x = col * 16.0f;
     float src_y = row * 16.0f;
@@ -316,6 +319,162 @@ static void write_to_source_slot(GBContext *ctx, int source_slot, uint8_t value)
 static int s_inspect_x = 0; // Columna (0 a 15)
 static int s_inspect_y = 0; // Fila (0 a 7)
 
+// =============================================================================
+// SISTEMA DE BANDERAS PARA HABITACIONES DE MAZMORRA (1 byte por celda)
+// =============================================================================
+enum DungeonCellFlags
+{
+    R_EMPTY = 0x00, // No hay habitación en esta celda (vacío)
+    R_ROOM = 0x01,  // Existe habitación (incluso si no tiene puertas visibles)
+
+    // Direcciones de puertas / pasillos abiertos
+    R_N = 0x02, // Puerta al Norte (Arriba)
+    R_S = 0x04, // Puerta al Sur   (Abajo)
+    R_E = 0x08, // Puerta al Este  (Derecha)
+    R_W = 0x10, // Puerta al Oeste (Izquierda)
+
+    // Marcadores para cuando Link tiene la Brújula
+    M_CHEST = 0x20, // Cofre en esta sala
+    M_BOSS = 0x40,  // Jefe (Calavera)
+    M_GOAL = 0x80,  // Cámara del Instrumento (Rombo blanco)
+
+    // Diccionario de las 16 combinaciones posibles de puertas
+    DRM_NONE = R_ROOM,
+    DRM_N = R_ROOM | R_N,
+    DRM_S = R_ROOM | R_S,
+    DRM_E = R_ROOM | R_E,
+    DRM_W = R_ROOM | R_W,
+    DRM_NS = R_ROOM | R_N | R_S,
+    DRM_NE = R_ROOM | R_N | R_E,
+    DRM_NW = R_ROOM | R_N | R_W,
+    DRM_SE = R_ROOM | R_S | R_E,
+    DRM_SW = R_ROOM | R_S | R_W,
+    DRM_EW = R_ROOM | R_E | R_W,
+    DRM_NSE = R_ROOM | R_N | R_S | R_E,
+    DRM_NSW = R_ROOM | R_N | R_S | R_W,
+    DRM_NEW = R_ROOM | R_N | R_E | R_W,
+    DRM_SEW = R_ROOM | R_S | R_E | R_W,
+    DRM_NSEW = R_ROOM | R_N | R_S | R_E | R_W
+};
+
+static const uint8_t s_dungeon_maps[9][8][8] = {
+    // -------------------------------------------------------------------------
+    // [0] LEVEL 1 ~ TAIL CAVE
+    // -------------------------------------------------------------------------
+    {
+        {0, 0, 0, 0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, DRM_S | M_GOAL},
+        {0, 0, DRM_E, DRM_SEW, DRM_W, 0, 0, DRM_NS | M_BOSS},
+        {0, DRM_S | M_CHEST, 0, DRM_NSE, DRM_SEW | M_CHEST, DRM_SW, DRM_S, DRM_NS},
+        {0, DRM_NS, DRM_E | M_CHEST, DRM_NSEW | M_CHEST, DRM_NEW | M_CHEST, DRM_NSEW, DRM_NEW, DRM_NW},
+        {0, DRM_N, 0, DRM_NE, DRM_SEW | M_CHEST, DRM_NW | M_CHEST, 0, 0},
+        {0, 0, DRM_E | M_CHEST, DRM_EW, DRM_NSW, 0, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0}},
+
+    // -------------------------------------------------------------------------
+    // [1] LEVEL 2 ~ BOTTLE GROTTO
+    // -------------------------------------------------------------------------
+    {
+        {0, DRM_E | M_CHEST, DRM_SEW | M_CHEST, DRM_EW | M_CHEST, DRM_EW, DRM_SEW, DRM_W, 0},
+        {0, 0, DRM_NS | M_CHEST, 0, 0, DRM_N | M_CHEST, 0, 0},
+        {0, DRM_SE, DRM_NW, 0, 0, DRM_E | M_GOAL, DRM_SE | M_BOSS, 0},
+        {0, DRM_N, 0, 0, 0, 0, DRM_N, 0},
+        {0, DRM_S | M_CHEST, 0, 0, 0, 0, DRM_S, 0},
+        {0, DRM_NE, DRM_SEW, DRM_SEW, DRM_SEW, DRM_SEW, DRM_NW, 0},
+        {0, 0, DRM_NS, DRM_N | M_CHEST, DRM_NE | M_CHEST, DRM_NW | M_CHEST, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0}},
+
+    // -------------------------------------------------------------------------
+    // [2] LEVEL 3 ~ KEY CAVERN
+    // -------------------------------------------------------------------------
+    {
+        {DRM_SE, DRM_EW, DRM_EW | M_CHEST, DRM_SW, 0, 0, 0, 0},
+        {DRM_NS, DRM_SE, DRM_SEW | M_CHEST, DRM_NW | M_CHEST, 0, 0, 0, 0},
+        {DRM_NE, DRM_NEW, DRM_NSEW, DRM_W, 0, 0, DRM_S, 0},
+        {0, DRM_S | M_CHEST, DRM_N, 0, 0, DRM_E, DRM_NSEW, DRM_W},
+        {0, DRM_NS, 0, 0, 0, 0, DRM_N, 0},
+        {0, DRM_NSE | M_CHEST, DRM_W | M_CHEST, 0, 0, 0, DRM_S | M_GOAL, 0},
+        {0, DRM_NS | M_CHEST, 0, 0, 0, 0, DRM_NS | M_BOSS, 0},
+        {0, DRM_NE, DRM_W | M_CHEST, 0, 0, 0, DRM_NE, DRM_W}},
+
+    // -------------------------------------------------------------------------
+    // [3] LEVEL 4 ~ ANGLER'S TUNNEL
+    // -------------------------------------------------------------------------
+    {
+        {0, 0, 0, DRM_SE | M_CHEST, DRM_SW, 0, 0, 0},
+        {0, DRM_S | M_GOAL, 0, DRM_NS, DRM_NS, 0, DRM_S | M_CHEST, 0},
+        {0, DRM_NS | M_BOSS, DRM_SE, DRM_NEW | M_CHEST, DRM_NSEW, DRM_SW | M_CHEST, DRM_NS, 0},
+        {0, DRM_NE, DRM_NSW | M_CHEST, DRM_SE | M_CHEST, DRM_NSEW, DRM_NSEW, DRM_NW | M_CHEST, 0},
+        {0, 0, DRM_NSE, DRM_NSEW, DRM_NSW, DRM_NS | M_CHEST, 0, 0},
+        {0, 0, DRM_NE | M_CHEST, DRM_NSEW, DRM_NSEW | M_CHEST, DRM_NW | M_CHEST, 0, 0},
+        {0, 0, 0, DRM_NS, DRM_N | M_CHEST, 0, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0}},
+
+    // -------------------------------------------------------------------------
+    // [4] LEVEL 5 ~ CATFISH'S MAW
+    // -------------------------------------------------------------------------
+    {
+        {DRM_E, DRM_W, DRM_S | M_GOAL, DRM_E | M_CHEST, DRM_SW, 0, 0, 0},
+        {0, 0, DRM_NS | M_BOSS, DRM_NONE | M_CHEST, DRM_NSE, DRM_SW | M_CHEST, 0, 0},
+        {DRM_E, DRM_EW, DRM_NEW, DRM_W, DRM_NS, DRM_NSE | M_CHEST, DRM_W | M_CHEST, 0},
+        {0, 0, 0, 0, DRM_NE, DRM_NSEW, DRM_W, 0},
+        {0, 0, DRM_E, DRM_SW, DRM_SE, DRM_NW, 0, 0},
+        {0, DRM_E | M_CHEST, DRM_EW, DRM_NSW, DRM_NS, 0, 0, 0},
+        {0, 0, DRM_E | M_CHEST, DRM_NEW, DRM_NSW, 0, 0, 0},
+        {0, 0, 0, DRM_E | M_CHEST, DRM_NEW, DRM_EW | M_CHEST, DRM_SW, 0}},
+
+    // -------------------------------------------------------------------------
+    // [5] LEVEL 6 ~ FACE SHRINE
+    // -------------------------------------------------------------------------
+    {
+        {DRM_S | M_CHEST, 0, 0, 0, 0, 0, 0, DRM_S | M_CHEST},
+        {DRM_NSE, DRM_SW | M_CHEST, 0, DRM_S, DRM_S | M_GOAL, 0, DRM_S | M_CHEST, DRM_NS},
+        {DRM_NSE, DRM_NSEW | M_CHEST, DRM_EW, DRM_NSW, DRM_NS | M_BOSS, DRM_NS, DRM_NS | M_CHEST, DRM_NS},
+        {DRM_NE | M_CHEST, DRM_NSEW, 0, DRM_NS, DRM_NS, 0, DRM_NSE, DRM_NW},
+        {0, DRM_NE, DRM_SW | M_CHEST, DRM_NE, DRM_NW, DRM_NS, DRM_NS, 0},
+        {0, DRM_S | M_CHEST, DRM_NS | M_CHEST, 0, 0, DRM_NSE, DRM_NSW | M_CHEST, 0},
+        {0, DRM_N, DRM_NE, DRM_SEW, DRM_EW, DRM_NW, DRM_N, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0}},
+
+    // -------------------------------------------------------------------------
+    // [6] LEVEL 7 ~ EAGLE'S TOWER
+    // -------------------------------------------------------------------------
+    {
+        {0, DRM_S | M_CHEST, DRM_S | M_CHEST, 0, 0, 0, 0, 0},
+        {DRM_SE, DRM_NSEW, DRM_NSEW, DRM_SW, 0, 0, 0, 0},
+        {DRM_NSE, DRM_NSW, DRM_NSE, DRM_NSW | M_CHEST, 0, 0, 0, 0},
+        {DRM_NE, DRM_NEW | M_CHEST, DRM_NEW, DRM_NW, 0, 0, 0, 0},
+        {DRM_SE | M_CHEST, DRM_SEW, DRM_EW, DRM_SW | M_CHEST, 0, DRM_SE, DRM_W | M_CHEST, 0},
+        {DRM_NSE, DRM_NSEW, DRM_SEW, DRM_NSW, DRM_SE, DRM_NSW, DRM_S | M_GOAL, DRM_S | M_CHEST},
+        {DRM_NSE | M_CHEST, DRM_NEW, DRM_NSEW, DRM_NSW, DRM_NE, DRM_NSEW, DRM_NEW | M_BOSS, DRM_NW},
+        {DRM_NE, DRM_SEW, DRM_NEW, DRM_NW, 0, DRM_NE, DRM_W, 0}},
+
+    // -------------------------------------------------------------------------
+    // [7] LEVEL 8 ~ TURTLE ROCK
+    // -------------------------------------------------------------------------
+    {
+        {0, 0, 0, DRM_S | M_GOAL, DRM_S, 0, 0, 0},
+        {DRM_S | M_CHEST, 0, 0, DRM_NS | M_BOSS, DRM_NS | M_CHEST, 0, 0, DRM_S | M_CHEST},
+        {DRM_NE, DRM_EW, DRM_SEW | M_CHEST, DRM_NEW, DRM_NEW, DRM_EW | M_CHEST, DRM_SW, DRM_N},
+        {0, DRM_SE | M_CHEST, DRM_NSEW, DRM_EW, DRM_EW, DRM_EW, DRM_NSW, 0},
+        {0, DRM_NS | M_CHEST, DRM_NE, DRM_EW, DRM_SEW, DRM_SEW, DRM_NW, 0},
+        {DRM_S, DRM_NSE | M_CHEST, DRM_SW, DRM_SE | M_CHEST, DRM_NSEW, DRM_NSEW, DRM_SW, DRM_S},
+        {DRM_NSE, DRM_NW | M_CHEST, DRM_NE, DRM_NSEW, DRM_NSEW, DRM_NEW | M_CHEST, DRM_NEW, DRM_NSW},
+        {DRM_N | M_CHEST, 0, 0, DRM_NS, DRM_N, 0, 0, DRM_N | M_CHEST}},
+
+    // -------------------------------------------------------------------------
+    // [8] LEVEL 0 ~ COLOR DUNGEON
+    // -------------------------------------------------------------------------
+    {
+        {0, 0, 0, 0, 0, 0, 0, 0},
+        {0, DRM_SE | M_BOSS, DRM_W, 0, 0, DRM_E | M_CHEST, DRM_SW, 0},
+        {0, DRM_NE, DRM_SW, DRM_SE | M_CHEST, DRM_W, DRM_SE, DRM_NW, 0},
+        {0, 0, DRM_NE, DRM_NEW, DRM_SW, DRM_NS, 0, 0},
+        {0, 0, DRM_SE, DRM_SEW | M_CHEST, DRM_NEW, DRM_NSW | M_CHEST, 0, 0},
+        {0, 0, DRM_N, DRM_N, DRM_E | M_CHEST, DRM_NW, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0}}};
+
 // Textura completa precompuesta en RAM
 extern C3D_Tex g_tex_overworld_map;
 
@@ -324,20 +483,27 @@ bool is_in_dungeon(GBContext *ctx, uint8_t *out_dungeon_id)
     if (!ctx || !ctx->wram)
         return false;
 
-    // 0x1B9F (wIsIndoor): 1 = dentro, 0 = exterior
-    uint8_t is_indoor = ctx->wram[0x1B9F];
-    if (is_indoor == 0)
+    // 1. 0x1BA5 (0xDBA5 - wIsIndoor): 0x00 = Exterior, 0x01 = Interior
+    uint8_t is_indoor = ctx->wram[0x1BA5];
+    if (is_indoor == 0x00)
         return false;
 
-    // 0x1B9C (wDungeonId): 0x00 a 0x08 son mazmorras reales
-    uint8_t dungeon_id = ctx->wram[0x1B9C];
-    if (dungeon_id <= 0x08)
+    // 2. 0x1BA6 (0xDBA6 - wMapId): 0x00..0x07 son Mazmorras 1..8, 0xFF es Color Dungeon
+    uint8_t map_id = ctx->wram[0x1BA6];
+    if (map_id <= 0x07)
     {
         if (out_dungeon_id)
-            *out_dungeon_id = dungeon_id;
+            *out_dungeon_id = map_id;
+        return true;
+    }
+    else if (map_id == 0xFF)
+    {
+        if (out_dungeon_id)
+            *out_dungeon_id = 8; // Mazmorra del Color
         return true;
     }
 
+    // Si map_id está entre 0x08 y 0x1F, es una casa o cueva normal
     return false;
 }
 
@@ -354,27 +520,118 @@ static const char *s_dungeon_names[] = {
 
 void render_dungeon_map(GBContext *ctx, uint8_t dungeon_id)
 {
-    const float map_size = 160.0f;
-    const float start_x = 72.0f;
-    const float start_y = 51.0f;
+    if (!ctx || !ctx->wram || dungeon_id > 8)
+        return;
 
-    // 1. Marco decorativo
+    const float map_size = 160.0f;
+    const float start_x = 80.0f;
+    const float start_y = 51.0f;
+    const float cell_size = 20.0f; // 160 / 8 celdas
+
+    // fondo azul oscuro
+    int bg_offset = debug_get_vbo_offset();
+    debug_push_rect(start_x, start_y, map_size, map_size, 0.09f, 0.12f, 0.28f, 1.0f);
+    debug_flush_rects(bg_offset);
+
+    // mapa y brújula
+    uint16_t item_base = (dungeon_id < 8) ? (0x1B16 + (dungeon_id * 5)) : 0x1DDA;
+    bool has_map = (ctx->wram[item_base + 0] != 0);
+    bool has_compass = (ctx->wram[item_base + 1] != 0);
+
+    if (!has_map)
+    {
+        // no hay mapa
+        ui_draw_sprite(&g_tex_map_frame, start_x - 5.0f, start_y - 5.0f,
+                       map_size + 11.0f, map_size + 11.0f, 188.0f, 188.0f);
+        debug_printf(start_x + 36.0f, start_y + 76.0f, "NO HAY MAPA");
+        return;
+    }
+
+    // mapa
+    int rooms_offset = debug_get_vbo_offset();
+    const float cr = 0.95f, cg = 0.92f, cb = 0.65f; // color crema
+
+    for (int row = 0; row < 8; row++)
+    {
+        for (int col = 0; col < 8; col++)
+        {
+            uint8_t cell = s_dungeon_maps[dungeon_id][row][col];
+            if (!(cell & R_ROOM))
+                continue;
+
+            float rx = start_x + (col * cell_size);
+            float ry = start_y + (row * cell_size);
+
+            debug_push_rect(rx + 3.0f, ry + 3.0f, 14.0f, 14.0f, cr, cg, cb, 1.0f);
+
+            if (cell & R_N)
+                debug_push_rect(rx + 8.0f, ry + 0.0f, 4.0f, 3.0f, cr, cg, cb, 1.0f);
+            if (cell & R_S)
+                debug_push_rect(rx + 8.0f, ry + 17.0f, 4.0f, 3.0f, cr, cg, cb, 1.0f);
+            if (cell & R_W)
+                debug_push_rect(rx + 0.0f, ry + 8.0f, 3.0f, 4.0f, cr, cg, cb, 1.0f);
+            if (cell & R_E)
+                debug_push_rect(rx + 17.0f, ry + 8.0f, 3.0f, 4.0f, cr, cg, cb, 1.0f);
+
+            // brújula
+            if (has_compass)
+            {
+                if (cell & M_BOSS)
+                    debug_push_rect(rx + 7.0f, ry + 7.0f, 6.0f, 6.0f, 0.85f, 0.15f, 0.15f, 1.0f); // Rojo: Jefe
+                else if (cell & M_GOAL)
+                    debug_push_rect(rx + 7.0f, ry + 7.0f, 6.0f, 6.0f, 0.20f, 0.65f, 0.95f, 1.0f); // Azul: Instrumento
+                else if (cell & M_CHEST)
+                    debug_push_rect(rx + 8.0f, ry + 8.0f, 4.0f, 4.0f, 0.85f, 0.55f, 0.10f, 1.0f); // Dorado: Cofre
+            }
+        }
+    }
+    debug_flush_rects(rooms_offset);
+
+    // marco
     ui_draw_sprite(&g_tex_map_frame, start_x - 5.0f, start_y - 5.0f,
                    map_size + 11.0f, map_size + 11.0f, 188.0f, 188.0f);
 
-    // 2. Fondo interior
-    int bg_offset = debug_get_vbo_offset();
-    debug_push_rect(start_x, start_y, map_size, map_size, 0.08f, 0.08f, 0.12f, 1.0f);
-    debug_flush_rects(bg_offset);
+    // -------------------------------------------------------------------------
+    // ítems de mazmorra
+    // -------------------------------------------------------------------------
+    const float right_x = 260.0f;
+    const float left_x = 37.0;
+    const float icon_sz = 30.0f;
 
-    // 3. Título de la mazmorra
-    const char *name = (dungeon_id <= 8) ? s_dungeon_names[dungeon_id] : "DESCONOCIDO";
-    debug_printf(start_x + 10.0f, start_y + 20.0f, "%s", name);
+    bool has_beak = (ctx->wram[item_base + 2] != 0);
+    bool has_boss_key = (ctx->wram[item_base + 3] != 0);
+    uint8_t small_keys = ctx->wram[item_base + 4];
 
-    // 4. Datos de depuración
-    uint8_t room = ctx->hram[0x76];
-    debug_printf(start_x + 10.0f, start_y + 45.0f, "DUNGEON ID: %d", dungeon_id);
-    debug_printf(start_x + 10.0f, start_y + 60.0f, "SALA ACTUAL: 0x%02X", room);
+    // pico de piedra
+    if (has_beak)
+    {
+       draw_atlas_slot(63, left_x, 76.0f, icon_sz);
+    }
+
+    // brújula
+    if (has_compass)
+    {
+        draw_atlas_slot(62, left_x, 113.0f, icon_sz); // 116 mitad exacta
+    }
+    
+    // mapa
+    if (has_map)
+    {
+        draw_atlas_slot(66, left_x, 156.0f, icon_sz);
+    }
+
+    // llave de jefe
+    if (has_boss_key)
+    {
+        draw_atlas_slot(65, right_x, 141.0f, icon_sz);
+    }
+
+    // llaves pequeñas y su contador
+    if (small_keys > 0)
+    {
+        draw_atlas_slot(64, right_x, 91.0f, icon_sz);
+        debug_printf(right_x + 25.0f, 105.0f, "x%d", small_keys);
+    }
 }
 
 void render_overworld_map(GBContext *ctx)
@@ -383,7 +640,7 @@ void render_overworld_map(GBContext *ctx)
         return;
 
     const float map_size = 160.0f;
-    const float start_x = 72.0f;
+    const float start_x = 80.0f;
     const float start_y = 51.0f;
     const float cell_size = 10.0f; // 160 / 16
 
