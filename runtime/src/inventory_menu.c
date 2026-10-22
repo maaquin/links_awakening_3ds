@@ -20,10 +20,10 @@ int debug_get_vbo_offset(void);
 #define WRAM_EQUIP_SLOT_B 0xDB00
 #define WRAM_EQUIP_SLOT_A 0xDB01
 #define WRAM_INV_ITEMS_START 0xDB02
+#define WRAM_EQUIP_SLOT_X (WRAM_INV_ITEMS_START + 10)
+#define WRAM_EQUIP_SLOT_Y 0xDB10
 #define WRAM_SHIELD_LEVEL 0xDB44
 #define WRAM_SWORD_LEVEL 0xDB4E
-#define WRAM_SEASHELLS 0x1B4F
-#define WRAM_INSTRUMENTS_START 0xDB65
 #define WRAM_MAX_HEARTS 0xDB5B
 
 // items del inventario
@@ -45,25 +45,39 @@ int debug_get_vbo_offset(void);
 #define WRAM_BOMBS_COUNT 0xDB4D
 #define WRAM_ARROWS_COUNT 0xDB45
 #define WRAM_POWDER_COUNT 0x1B4C
-#define WRAM_SEASHELLS_COUNT 0x1B4E
+#define WRAM_SEASHELLS_COUNT 0x1B0F
 
 // información para equipo
-#define WRAM_FLIPPERS 0xDB3E            // 0x01 = Aletas obtenidas
-#define WRAM_TRADE_ITEM 0xDB0E          // Objeto de intercambio activo (0x01 - 0x0E)
-#define WRAM_RUPEES_H 0xDB5D            // Rupias (centenas)
-#define WRAM_RUPEES_L 0xDB5E            // Rupias (decenas y unidades)
-#define WRAM_INIT_PHOTOS_COUNT 0x1B74   // Flags de fotos tomadas
-#define WRAM_FINISH_PHOTOS_COUNT 0x1B75 // Flags de fotos tomadas
+#define WRAM_FLIPPERS 0xDB3E   // 0x01 = Aletas obtenidas
+#define WRAM_TRADE_ITEM 0xDB0E // Objeto de intercambio activo (0x01 - 0x0E)
+#define WRAM_RUPEES_H 0xDB5D   // Rupias (centenas)
+#define WRAM_RUPEES_L 0xDB5E   // Rupias (decenas y unidades)
+#define WRAM_PHOTOS_1 0xDC0C   // Fotos 1 a 8 (bits 0..7)
+#define WRAM_PHOTOS_2 0xDC0D   // Fotos 9 a 12 (bits 0..3)
 #define WRAM_TUNIC_COLOR 0xDB6F
 #define WRAM_HEART_PIECES 0xDB5C
-#define WRAM_MEDICINE 0xDB4D
+#define WRAM_MEDICINE 0xDB0D
+#define WRAM_SEASHELLS 0x1B4F
+#define WRAM_GOLDEN_LEAVES 0xDB15
+#define WRAM_INSTRUMENTS_START 0xDB65
 
 // llaves de mazmorra
-#define WRAM_KEY_TAIL 0xDB10
-#define WRAM_KEY_SLIME 0xDB11
+#define WRAM_KEY_TAIL 0xDB11
 #define WRAM_KEY_ANGLER 0xDB12
 #define WRAM_KEY_FACE 0xDB13
 #define WRAM_KEY_BIRD 0xDB14
+
+// ocarina y canciones
+#define WRAM_OCARINA_SONGS 0xDB49    // Máscara de bits: bit 0 = Marin, bit 1 = Manbo, bit 2 = Mamu
+#define WRAM_OCARINA_SELECTED 0xDB4A // Índice activo: 0, 1 o 2
+
+typedef struct
+{
+    bool open;
+    float x, y, w, h;
+} OcarinaPopup;
+
+static OcarinaPopup g_ocarina_popup = {0};
 
 bool hotswap_is_active(void);
 uint8_t hotswap_get_backup_b(void);
@@ -98,41 +112,6 @@ static InventorySlotUI g_slot_equip_a;
 static InventorySlotUI g_slot_equip_x;
 static InventorySlotUI g_slot_equip_y;
 static DragState g_drag = {0};
-
-static const char *get_item_name(uint8_t id)
-{
-    switch (id)
-    {
-    case 0x00:
-        return "VACIO";
-    case 0x01:
-        return "ESPADA";
-    case 0x02:
-        return "BOMBAS";
-    case 0x03:
-        return "ARCO";
-    case 0x04:
-        return "ESCUDO";
-    case 0x05:
-        return "GANCHO";
-    case 0x06:
-        return "VARITA";
-    case 0x07:
-        return "VIENTO";
-    case 0x08:
-        return "OCARINA";
-    case 0x09:
-        return "PLUMA";
-    case 0x0A:
-        return "PALA";
-    case 0x0B:
-        return "POLVOS";
-    case 0x0C:
-        return "BOOMERANG";
-    default:
-        return "ITEM";
-    }
-}
 
 static const char *s_instrument_names[8] = {
     "1.VIOLONCHELO", "2.CUERNO OLIFANTE", "3.CAMPANA", "4.ARPA",
@@ -262,8 +241,8 @@ static const int s_wram_id_to_atlas_index[16] = {
     [ITEM_POWDER] = 8,    // 0x08 -> polvos mágicos (índice 12)
     [ITEM_OCARINA] = 9,   // 0x09 -> ocarina (índice 8)
     [ITEM_FEATHER] = 10,  // 0x0A -> pluma (índice 9)
-    [ITEM_SHOVEL] = 11,   // 0x0B -> pala (índice 11)
-    [ITEM_BOOTS] = 12,    // 0x0C -> botas (índice 12)
+    [ITEM_SHOVEL] = 12,   // 0x0B -> pala (índice 11)
+    [ITEM_BOOTS] = 13,    // 0x0C -> botas (índice 12)
     [ITEM_BUMERANG] = 17, // Boomerang (índice 17)
     [0x0E] = 16,          // Poción (índice 16)
 };
@@ -307,12 +286,12 @@ static void write_to_source_slot(GBContext *ctx, int source_slot, uint8_t value)
     else if (source_slot == -3)
     {
         // Origen fue el botón X
-        gb_write8(ctx, WRAM_INV_ITEMS_START + 10, value);
+        gb_write8(ctx, WRAM_EQUIP_SLOT_X, value);
     }
     else if (source_slot == -4)
     {
         // Origen fue el botón Y
-        gb_write8(ctx, WRAM_INV_ITEMS_START + 11, value);
+        gb_write8(ctx, WRAM_EQUIP_SLOT_Y, value);
     }
 }
 
@@ -377,7 +356,7 @@ static const uint8_t s_dungeon_maps[9][8][8] = {
     {
         {0, DRM_E | M_CHEST, DRM_SEW | M_CHEST, DRM_EW | M_CHEST, DRM_EW, DRM_SEW, DRM_W, 0},
         {0, 0, DRM_NS | M_CHEST, 0, 0, DRM_N | M_CHEST, 0, 0},
-        {0, DRM_SE, DRM_NW, 0, 0, DRM_E | M_GOAL, DRM_SE | M_BOSS, 0},
+        {0, DRM_SE, DRM_NW, 0, 0, DRM_E | M_GOAL, DRM_SW | M_BOSS, 0},
         {0, DRM_N, 0, 0, 0, 0, DRM_N, 0},
         {0, DRM_S | M_CHEST, 0, 0, 0, 0, DRM_S, 0},
         {0, DRM_NE, DRM_SEW, DRM_SEW, DRM_SEW, DRM_SEW, DRM_NW, 0},
@@ -483,28 +462,28 @@ bool is_in_dungeon(GBContext *ctx, uint8_t *out_dungeon_id)
     if (!ctx || !ctx->wram)
         return false;
 
-    // 1. 0x1BA5 (0xDBA5 - wIsIndoor): 0x00 = Exterior, 0x01 = Interior
+    // 1. Debe estar en interiores (0x1BA5 != 0)
     uint8_t is_indoor = ctx->wram[0x1BA5];
     if (is_indoor == 0x00)
         return false;
 
-    // 2. 0x1BA6 (0xDBA6 - wMapId): 0x00..0x07 son Mazmorras 1..8, 0xFF es Color Dungeon
-    uint8_t map_id = ctx->wram[0x1BA6];
-    if (map_id <= 0x07)
-    {
-        if (out_dungeon_id)
-            *out_dungeon_id = map_id;
-        return true;
-    }
-    else if (map_id == 0xFF)
-    {
-        if (out_dungeon_id)
-            *out_dungeon_id = 8; // Mazmorra del Color
-        return true;
-    }
+    // 2. ID real de la mazmorra activa (0x00 a 0x07 = Niveles 1 a 8, 0xFF = Color)
+    uint8_t dungeon_id = ctx->wram[0x1B60];
+    if (dungeon_id > 0x07 && dungeon_id != 0xFF)
+        return false; // No es una mazmorra válida
 
-    // Si map_id está entre 0x08 y 0x1F, es una casa o cueva normal
-    return false;
+    // 3. Comprobar si es sala lateral 2D (wIsSideScrolling en 0x1402 o hIsSideScrolling)
+    uint8_t is_side_scroll = ctx->wram[0x1402];
+    uint8_t room = ctx->hram[0x76];
+
+    // Si room >= 0x80 pero NO es una sección lateral 2D, es una casa/tienda/cueva exterior
+    if (room >= 0x80 && !is_side_scroll)
+        return false;
+
+    if (out_dungeon_id)
+        *out_dungeon_id = (dungeon_id == 0xFF) ? 8 : dungeon_id;
+
+    return true;
 }
 
 static const char *s_dungeon_names[] = {
@@ -544,52 +523,70 @@ void render_dungeon_map(GBContext *ctx, uint8_t dungeon_id)
         ui_draw_sprite(&g_tex_map_frame, start_x - 5.0f, start_y - 5.0f,
                        map_size + 11.0f, map_size + 11.0f, 188.0f, 188.0f);
         debug_printf(start_x + 36.0f, start_y + 76.0f, "NO HAY MAPA");
-        return;
     }
-
-    // mapa
-    int rooms_offset = debug_get_vbo_offset();
-    const float cr = 0.95f, cg = 0.92f, cb = 0.65f; // color crema
-
-    for (int row = 0; row < 8; row++)
+    else
     {
-        for (int col = 0; col < 8; col++)
+
+        // mapa
+
+        // 1. Dibujar habitaciones y pasillos sólidos
+        int rooms_offset = debug_get_vbo_offset();
+        const float cr = 0.95f, cg = 0.92f, cb = 0.65f;
+
+        for (int row = 0; row < 8; row++)
         {
-            uint8_t cell = s_dungeon_maps[dungeon_id][row][col];
-            if (!(cell & R_ROOM))
-                continue;
-
-            float rx = start_x + (col * cell_size);
-            float ry = start_y + (row * cell_size);
-
-            debug_push_rect(rx + 3.0f, ry + 3.0f, 14.0f, 14.0f, cr, cg, cb, 1.0f);
-
-            if (cell & R_N)
-                debug_push_rect(rx + 8.0f, ry + 0.0f, 4.0f, 3.0f, cr, cg, cb, 1.0f);
-            if (cell & R_S)
-                debug_push_rect(rx + 8.0f, ry + 17.0f, 4.0f, 3.0f, cr, cg, cb, 1.0f);
-            if (cell & R_W)
-                debug_push_rect(rx + 0.0f, ry + 8.0f, 3.0f, 4.0f, cr, cg, cb, 1.0f);
-            if (cell & R_E)
-                debug_push_rect(rx + 17.0f, ry + 8.0f, 3.0f, 4.0f, cr, cg, cb, 1.0f);
-
-            // brújula
-            if (has_compass)
+            for (int col = 0; col < 8; col++)
             {
-                if (cell & M_BOSS)
-                    debug_push_rect(rx + 7.0f, ry + 7.0f, 6.0f, 6.0f, 0.85f, 0.15f, 0.15f, 1.0f); // Rojo: Jefe
-                else if (cell & M_GOAL)
-                    debug_push_rect(rx + 7.0f, ry + 7.0f, 6.0f, 6.0f, 0.20f, 0.65f, 0.95f, 1.0f); // Azul: Instrumento
-                else if (cell & M_CHEST)
-                    debug_push_rect(rx + 8.0f, ry + 8.0f, 4.0f, 4.0f, 0.85f, 0.55f, 0.10f, 1.0f); // Dorado: Cofre
+                uint8_t cell = s_dungeon_maps[dungeon_id][row][col];
+                if (!(cell & R_ROOM))
+                    continue;
+
+                float rx = start_x + (col * cell_size);
+                float ry = start_y + (row * cell_size);
+
+                debug_push_rect(rx + 3.0f, ry + 3.0f, 14.0f, 14.0f, cr, cg, cb, 1.0f);
+
+                if (cell & R_N)
+                    debug_push_rect(rx + 8.0f, ry + 0.0f, 4.0f, 3.0f, cr, cg, cb, 1.0f);
+                if (cell & R_S)
+                    debug_push_rect(rx + 8.0f, ry + 17.0f, 4.0f, 3.0f, cr, cg, cb, 1.0f);
+                if (cell & R_W)
+                    debug_push_rect(rx + 0.0f, ry + 8.0f, 3.0f, 4.0f, cr, cg, cb, 1.0f);
+                if (cell & R_E)
+                    debug_push_rect(rx + 17.0f, ry + 8.0f, 3.0f, 4.0f, cr, cg, cb, 1.0f);
             }
         }
-    }
-    debug_flush_rects(rooms_offset);
+        debug_flush_rects(rooms_offset);
 
-    // marco
-    ui_draw_sprite(&g_tex_map_frame, start_x - 5.0f, start_y - 5.0f,
-                   map_size + 11.0f, map_size + 11.0f, 188.0f, 188.0f);
+        // 2. Dibujar íconos de la brújula con sprites del atlas (si se posee)
+        if (has_compass)
+        {
+            for (int row = 0; row < 8; row++)
+            {
+                for (int col = 0; col < 8; col++)
+                {
+                    uint8_t cell = s_dungeon_maps[dungeon_id][row][col];
+                    if (!(cell & R_ROOM))
+                        continue;
+
+                    float rx = start_x + (col * cell_size);
+                    float ry = start_y + (row * cell_size);
+
+                    // Cada ícono mide 8x8 px centrado dentro de su casilla de 16x16
+                    if (cell & M_BOSS)
+                        draw_atlas_slot(68, rx + 2.0f, ry + 2.0f, 16.0f);
+                    else if (cell & M_GOAL)
+                        draw_atlas_slot(69, rx + 2.0f, ry + 2.0f, 16.0f);
+                    else if (cell & M_CHEST)
+                        draw_atlas_slot(67, rx + 2.0f, ry + 2.0f, 16.0f);
+                }
+            }
+        }
+
+        // marco
+        ui_draw_sprite(&g_tex_map_frame, start_x - 5.0f, start_y - 5.0f,
+                       map_size + 11.0f, map_size + 11.0f, 188.0f, 188.0f);
+    }
 
     // -------------------------------------------------------------------------
     // ítems de mazmorra
@@ -605,7 +602,7 @@ void render_dungeon_map(GBContext *ctx, uint8_t dungeon_id)
     // pico de piedra
     if (has_beak)
     {
-       draw_atlas_slot(63, left_x, 76.0f, icon_sz);
+        draw_atlas_slot(63, left_x, 76.0f, icon_sz);
     }
 
     // brújula
@@ -613,7 +610,7 @@ void render_dungeon_map(GBContext *ctx, uint8_t dungeon_id)
     {
         draw_atlas_slot(62, left_x, 113.0f, icon_sz); // 116 mitad exacta
     }
-    
+
     // mapa
     if (has_map)
     {
@@ -689,33 +686,46 @@ void render_overworld_map(GBContext *ctx)
 
     // link
     uint8_t room = ctx->hram[0x76];
-    int col = room % 16;
-    int row = room / 16;
+    uint8_t is_indoor = ctx->wram[0x1BA5];
 
-    float cell_x = start_x + (col * cell_size);
-    float cell_y = start_y + (row * cell_size);
-
-    static int frame_counter = 0;
-    frame_counter++;
-
-    if ((frame_counter / 30) % 2 == 0)
+    static int s_last_overworld_room = -1;
+    if (is_indoor == 0x00)
     {
-        int marker_offset = debug_get_vbo_offset();
-        float px = cell_x + 2.0f;
-        float py = cell_y + 2.0f;
+        s_last_overworld_room = room;
+    }
+    uint8_t display_room = (is_indoor == 0x00) ? room : s_last_overworld_room;
 
-        debug_push_rect(px + 2.0f, py + 0.0f, 3.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
-        debug_push_rect(px + 1.0f, py + 1.0f, 5.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
-        debug_push_rect(px + 0.0f, py + 2.0f, 7.0f, 3.0f, 0.0f, 0.0f, 0.0f, 1.0f);
-        debug_push_rect(px + 1.0f, py + 5.0f, 5.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
-        debug_push_rect(px + 2.0f, py + 6.0f, 3.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+    if (s_last_overworld_room > 0)
+    {
 
-        const float yr = 1.0f, yg = 0.85f, yb = 0.10f;
-        debug_push_rect(px + 2.0f, py + 1.0f, 3.0f, 1.0f, yr, yg, yb, 1.0f);
-        debug_push_rect(px + 1.0f, py + 2.0f, 5.0f, 3.0f, yr, yg, yb, 1.0f);
-        debug_push_rect(px + 2.0f, py + 5.0f, 3.0f, 1.0f, yr, yg, yb, 1.0f);
+        int col = display_room % 16;
+        int row = display_room / 16;
 
-        debug_flush_rects(marker_offset);
+        float cell_x = start_x + (col * cell_size);
+        float cell_y = start_y + (row * cell_size);
+
+        static int frame_counter = 0;
+        frame_counter++;
+
+        if ((frame_counter / 30) % 2 == 0)
+        {
+            int marker_offset = debug_get_vbo_offset();
+            float px = cell_x + 2.0f;
+            float py = cell_y + 2.0f;
+
+            debug_push_rect(px + 2.0f, py + 0.0f, 3.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+            debug_push_rect(px + 1.0f, py + 1.0f, 5.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+            debug_push_rect(px + 0.0f, py + 2.0f, 7.0f, 3.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+            debug_push_rect(px + 1.0f, py + 5.0f, 5.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+            debug_push_rect(px + 2.0f, py + 6.0f, 3.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+
+            const float yr = 1.0f, yg = 0.85f, yb = 0.10f;
+            debug_push_rect(px + 2.0f, py + 1.0f, 3.0f, 1.0f, yr, yg, yb, 1.0f);
+            debug_push_rect(px + 1.0f, py + 2.0f, 5.0f, 3.0f, yr, yg, yb, 1.0f);
+            debug_push_rect(px + 2.0f, py + 5.0f, 3.0f, 1.0f, yr, yg, yb, 1.0f);
+
+            debug_flush_rects(marker_offset);
+        }
     }
 }
 
@@ -730,6 +740,48 @@ void inventory_menu_update(GBContext *ctx)
 
     touchPosition touch;
     hidTouchRead(&touch);
+
+    if (g_ocarina_popup.open)
+    {
+        if (kDown & KEY_TOUCH)
+        {
+            uint8_t songs = gb_read8(ctx, WRAM_OCARINA_SONGS);
+            float pop_x = 75.0f;
+            float pop_y = 90.0f;
+            float btn_size = 36.0f;
+            float spacing = 50.0f;
+
+            // Comprobamos cada una de las 3 canciones
+            static const uint8_t s_song_masks[3] = {0x04, 0x02, 0x01};
+
+            bool touched_option = false;
+            for (int s = 0; s < 3; s++)
+            {
+                if (songs & s_song_masks[s])
+                {
+                    float bx = pop_x + 15.0f + (s * spacing);
+                    float by = pop_y + 12.0f;
+
+                    if (touch.px >= bx && touch.px <= (bx + btn_size) &&
+                        touch.py >= by && touch.py <= (by + btn_size))
+                    {
+                        gb_write8(ctx, WRAM_OCARINA_SELECTED, s);
+                        touched_option = true;
+                        g_ocarina_popup.open = false;
+                        break;
+                    }
+                }
+            }
+
+            // Si tocó en cualquier otra parte fuera o dentro de la ventana, cerrar el popup
+            if (!touched_option)
+            {
+                g_ocarina_popup.open = false;
+            }
+            return; // Consumimos el input para que no toque nada del fondo
+        }
+        return;
+    }
 
     if (kDown & KEY_L)
         g_active_tab = (g_active_tab + TAB_COUNT - 1) % TAB_COUNT;
@@ -801,7 +853,7 @@ void inventory_menu_update(GBContext *ctx)
 
             if (is_point_inside(touch.px, touch.py, &g_slot_equip_x))
             {
-                uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + 10);
+                uint8_t item = gb_read8(ctx, WRAM_EQUIP_SLOT_X);
                 if (item != 0x00)
                 {
                     g_drag.active = true;
@@ -815,7 +867,7 @@ void inventory_menu_update(GBContext *ctx)
 
             if (is_point_inside(touch.px, touch.py, &g_slot_equip_y))
             {
-                uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + 11);
+                uint8_t item = gb_read8(ctx, WRAM_EQUIP_SLOT_Y);
                 if (item != 0x00)
                 {
                     g_drag.active = true;
@@ -839,9 +891,34 @@ void inventory_menu_update(GBContext *ctx)
 
         if (g_drag.active && (kUp & KEY_TOUCH))
         {
-            uint8_t dragged_item = g_drag.item_id;
             float drop_x = g_drag.cur_x;
             float drop_y = g_drag.cur_y;
+
+            // Si es la ocarina y apenas se movió de la celda de origen, abrir popup
+            if (g_drag.item_id == ITEM_OCARINA)
+            {
+                // Si la soltó dentro de la misma casilla de donde la tomó
+                bool dropped_in_origin = false;
+                if (g_drag.source_slot >= 0 && is_point_inside(drop_x, drop_y, &g_slots[g_drag.source_slot]))
+                    dropped_in_origin = true;
+                else if (g_drag.source_slot == -1 && is_point_inside(drop_x, drop_y, &g_slot_equip_b))
+                    dropped_in_origin = true;
+                else if (g_drag.source_slot == -2 && is_point_inside(drop_x, drop_y, &g_slot_equip_a))
+                    dropped_in_origin = true;
+                else if (g_drag.source_slot == -3 && is_point_inside(drop_x, drop_y, &g_slot_equip_x))
+                    dropped_in_origin = true;
+                else if (g_drag.source_slot == -4 && is_point_inside(drop_x, drop_y, &g_slot_equip_y))
+                    dropped_in_origin = true;
+
+                if (dropped_in_origin)
+                {
+                    g_drag.active = false;
+                    g_ocarina_popup.open = true;
+                    return;
+                }
+            }
+
+            uint8_t dragged_item = g_drag.item_id;
 
             if (is_point_inside(drop_x, drop_y, &g_slot_equip_b))
             {
@@ -857,14 +934,14 @@ void inventory_menu_update(GBContext *ctx)
             }
             else if (is_point_inside(drop_x, drop_y, &g_slot_equip_x))
             {
-                uint8_t old_x = gb_read8(ctx, WRAM_INV_ITEMS_START + 10);
-                gb_write8(ctx, WRAM_INV_ITEMS_START + 10, dragged_item);
+                uint8_t old_x = gb_read8(ctx, WRAM_EQUIP_SLOT_X);
+                gb_write8(ctx, WRAM_EQUIP_SLOT_X, dragged_item);
                 write_to_source_slot(ctx, g_drag.source_slot, old_x);
             }
             else if (is_point_inside(drop_x, drop_y, &g_slot_equip_y))
             {
-                uint8_t old_y = gb_read8(ctx, WRAM_INV_ITEMS_START + 11);
-                gb_write8(ctx, WRAM_INV_ITEMS_START + 11, dragged_item);
+                uint8_t old_y = gb_read8(ctx, WRAM_EQUIP_SLOT_Y);
+                gb_write8(ctx, WRAM_EQUIP_SLOT_Y, dragged_item);
                 write_to_source_slot(ctx, g_drag.source_slot, old_y);
             }
             else
@@ -881,6 +958,22 @@ void inventory_menu_update(GBContext *ctx)
                 }
             }
             g_drag.active = false;
+        }
+    }
+
+    // Limpieza automática: si la ROM generó un duplicado de lo que tienes en X o Y
+    if (!g_drag.active)
+    {
+        uint8_t item_x = gb_read8(ctx, WRAM_EQUIP_SLOT_X);
+        uint8_t item_y = gb_read8(ctx, WRAM_EQUIP_SLOT_Y);
+
+        for (int i = 0; i < 10; i++)
+        {
+            uint8_t grid_item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
+            if (grid_item != 0x00 && (grid_item == item_x || grid_item == item_y))
+            {
+                gb_write8(ctx, WRAM_INV_ITEMS_START + i, 0x00);
+            }
         }
     }
 }
@@ -907,6 +1000,9 @@ void inventory_menu_render(GBContext *ctx)
         return;
 
     const float col_r = 0.85f, col_g = 0.80f, col_b = 0.53f; // #D9CC88
+
+    uint8_t item_x = gb_read8(ctx, WRAM_EQUIP_SLOT_X);
+    uint8_t item_y = gb_read8(ctx, WRAM_EQUIP_SLOT_Y);
 
     // 1. Fondo completo (320x240)
     ui_draw_sprite(&g_tex_bg, 0.0f, 0.0f, 320.0f, 240.0f, 256.0f, 256.0f);
@@ -949,8 +1045,8 @@ void inventory_menu_render(GBContext *ctx)
         // Ítems equipados
         uint8_t eq_b = hotswap_is_active() ? hotswap_get_backup_b() : gb_read8(ctx, WRAM_EQUIP_SLOT_B);
         uint8_t eq_a = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
-        uint8_t eq_x = gb_read8(ctx, WRAM_INV_ITEMS_START + 10);
-        uint8_t eq_y = gb_read8(ctx, WRAM_INV_ITEMS_START + 11);
+        uint8_t eq_x = item_x;
+        uint8_t eq_y = item_y;
 
         draw_slot_item(ctx, eq_b, g_slot_equip_b.x + 4.0f, g_slot_equip_b.y, 32.0f);
         draw_slot_item(ctx, eq_a, g_slot_equip_a.x + 4.0f, g_slot_equip_a.y, 32.0f);
@@ -961,6 +1057,10 @@ void inventory_menu_render(GBContext *ctx)
         for (int i = 0; i < 10; i++)
         {
             uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
+
+            if (item == 0x00 || item == item_x || item == item_y)
+                continue;
+
             draw_slot_item(ctx, item, g_slots[i].x + 8.0f, g_slots[i].y + 4.0f, 32.0f);
         }
 
@@ -994,14 +1094,21 @@ void inventory_menu_render(GBContext *ctx)
         // -------------------------------------------------------------
         // columna izquierda
         // -------------------------------------------------------------
-        // aletas
+        // aletas u hojas doradas
         uint8_t has_flippers = gb_read8(ctx, WRAM_FLIPPERS);
+        uint8_t golden_leaves = gb_read8(ctx, WRAM_GOLDEN_LEAVES);
+
         if (has_flippers)
         {
             draw_atlas_slot(11, 37.0f, 57.0f, 26.0f);
         }
+        else if (golden_leaves >= 1 && golden_leaves <= 5)
+        {
+            draw_atlas_slot(70, 26.0f, 61.0f, 20.0f);
+            debug_printf_ex(46.0f, 65.0f, 1.0f, col_r, col_g, col_b, "%02d", golden_leaves);
+        }
 
-        uint8_t trade_item = gb_read8(ctx, 0xDB0E);
+        uint8_t trade_item = gb_read8(ctx, WRAM_TRADE_ITEM);
 
         // trade item
         if (trade_item >= 2 && trade_item <= 14)
@@ -1047,9 +1154,28 @@ void inventory_menu_render(GBContext *ctx)
             {114.0f, 78.0f}   // 8. Tambor (NO)
         };
 
+        const float inst_size = 26.0f; // o 24.0f según el ajuste dentro del círculo
+
+        for (int i = 0; i < 8; i++)
+        {
+            // Leemos el byte de la mazmorra i (0xDB65 a 0xDB6C)
+            uint8_t dungeon_flags = gb_read8(ctx, WRAM_INSTRUMENTS_START + i);
+
+            // Bit 1 (0x02) = Instrumento de las Sirenas obtenido
+            if (dungeon_flags & 0x02)
+            {
+                draw_atlas_slot(38 + i, s_inst_positions[i][0], s_inst_positions[i][1], inst_size);
+            }
+        }
+
         // llaves de mazmorra
-        const uint16_t key_addrs[5] = {
-            WRAM_KEY_TAIL, WRAM_KEY_SLIME, WRAM_KEY_ANGLER, WRAM_KEY_FACE, WRAM_KEY_BIRD};
+        bool has_keys[5] = {
+            gb_read8(ctx, WRAM_KEY_TAIL) != 0,      // Llave Cola
+            gb_read8(ctx, WRAM_GOLDEN_LEAVES) == 6, // Llave Baba (Slime Key = 6)
+            gb_read8(ctx, WRAM_KEY_ANGLER) != 0,    // Llave Pez
+            gb_read8(ctx, WRAM_KEY_FACE) != 0,      // Llave Rostro
+            gb_read8(ctx, WRAM_KEY_BIRD) != 0       // Llave Pájaro
+        };
 
         float key_size = 22.0f;
         float key_step = 24.0f;    // Espaciado entre llaves
@@ -1058,7 +1184,7 @@ void inventory_menu_render(GBContext *ctx)
 
         for (int k = 0; k < 5; k++)
         {
-            if (gb_read8(ctx, key_addrs[k]))
+            if (has_keys[k])
             {
                 draw_atlas_slot(46 + k, key_base_x + (k * key_step), key_y, key_size);
             }
@@ -1097,7 +1223,7 @@ void inventory_menu_render(GBContext *ctx)
         draw_atlas_slot(53 + hearts, right_x - 34.0f, 120.0f, 24.0f);
 
         // 4. Álbum de Fotos (Slot 60)
-        uint16_t photo_flags = ctx->wram[WRAM_INIT_PHOTOS_COUNT] | (ctx->wram[WRAM_FINISH_PHOTOS_COUNT] << 8);
+        uint16_t photo_flags = gb_read8(ctx, WRAM_PHOTOS_1) | ((uint16_t)(gb_read8(ctx, WRAM_PHOTOS_2) & 0x0F) << 8);
         int photo_count = 0;
 
         for (int i = 0; i < 12; i++)
@@ -1122,6 +1248,65 @@ void inventory_menu_render(GBContext *ctx)
         else
         {
             render_overworld_map(ctx);
+        }
+    }
+
+    // =============================================================================
+    // MENÚ CONTEXTUAL FLOTANTE DE LA OCARINA
+    // =============================================================================
+    if (g_ocarina_popup.open)
+    {
+        uint8_t songs = gb_read8(ctx, WRAM_OCARINA_SONGS);
+        uint8_t selected = gb_read8(ctx, WRAM_OCARINA_SELECTED);
+        static const uint8_t s_song_masks[3] = {0x04, 0x02, 0x01};
+
+        float pop_x = 75.0f;
+        float pop_y = 90.0f;
+        float pop_w = 170.0f;
+        float pop_h = 60.0f;
+        float icon_sz = 28.0f;
+        float spacing = 50.0f;
+
+        // 1. Oscurecer el fondo para dar efecto modal/contextual
+        int dim_offset = debug_get_vbo_offset();
+        debug_push_rect(0.0f, 0.0f, 320.0f, 240.0f, 0.0f, 0.0f, 0.0f, 0.55f);
+        debug_flush_rects(dim_offset);
+
+        // 2. Caja base del popup (borde dorado y fondo café oscuro)
+        int box_offset = debug_get_vbo_offset();
+        // Borde exterior
+        debug_push_rect(pop_x - 2.0f, pop_y - 2.0f, pop_w + 4.0f, pop_h + 4.0f, 0.85f, 0.80f, 0.53f, 1.0f);
+        // Fondo interior
+        debug_push_rect(pop_x, pop_y, pop_w, pop_h, 0.0f, 0.0f, 0.0f, 1.0f);
+        debug_flush_rects(box_offset);
+
+        // 3. Dibujar las 3 canciones (Slots 71: Marin, 72: Manbo, 73: Mamu)
+        for (int s = 0; s < 3; s++)
+        {
+            float ix = pop_x + 15.0f + (s * spacing);
+            float iy = pop_y + 16.0f;
+
+            if (songs & s_song_masks[s])
+            {
+                // Si es la canción activa, dibujar un marco selector dorado detrás
+                if (selected == s)
+                {
+                    int sel_offset = debug_get_vbo_offset();
+                    debug_push_rect(ix - 3.0f, iy - 3.0f, icon_sz + 6.0f, icon_sz + 6.0f, 0.98f, 0.90f, 0.40f, 1.0f);
+                    debug_push_rect(ix - 1.0f, iy - 1.0f, icon_sz + 2.0f, icon_sz + 2.0f, 0.22f, 0.14f, 0.07f, 1.0f);
+                    debug_flush_rects(sel_offset);
+                }
+
+                // Dibuja la carita del personaje correspondiente
+                draw_atlas_slot(71 + s, ix, iy, icon_sz);
+            }
+            else
+            {
+                // Canción aún no aprendida: cuadro vacío tenue
+                int locked_offset = debug_get_vbo_offset();
+                debug_push_rect(ix + 6.0f, iy + 6.0f, 16.0f, 16.0f, 0.35f, 0.25f, 0.18f, 1.0f);
+                debug_flush_rects(locked_offset);
+            }
         }
     }
 }

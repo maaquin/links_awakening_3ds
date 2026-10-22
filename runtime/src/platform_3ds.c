@@ -772,7 +772,7 @@ void gb_platform_register_context(GBContext *ctx)
 #define WRAM_INV_ITEMS_START 0xDB02
 #define WRAM_ITEM_B 0xDB00
 #define WRAM_SLOT_X (WRAM_INV_ITEMS_START + 10) // 0xDB0C
-#define WRAM_SLOT_Y (WRAM_INV_ITEMS_START + 11) // 0xDB0D
+#define WRAM_SLOT_Y 0xDB10                      // 0xDB10
 
 static int s_trigger_save_menu_frames = 0;
 
@@ -799,7 +799,7 @@ bool gb_platform_poll_events(GBContext *ctx)
     hidScanInput();
     uint32_t k = hidKeysHeld();
     uint32_t kDown = hidKeysDown();
-    uint32_t kUp = hidKeysUp(); // <-- Agregado para detectar soltado de botones
+    uint32_t kUp = hidKeysUp();
 
     // 1. Alternar overlay de depuración con START + SELECT
     if ((k & KEY_START) && (k & KEY_SELECT))
@@ -814,15 +814,13 @@ bool gb_platform_poll_events(GBContext *ctx)
 
     if ((k & KEY_R) && (k & KEY_L))
     {
-        ctx->wram[0x1B9F] = 0x01; // wIsIndoor: 1 = Interiores / Mazmorra
-        ctx->wram[0x1B9C] = 0x00; // wDungeonId: 0 = Cueva Tail (Nivel 1)
-        ctx->hram[0x76] = 0x27;   // hRoom: Sala de entrada interior de Cueva Tail
-
-        // Forzar recarga de sala y gráficos de interior
-        ctx->wram[0x115D] = 0x01; // Transición de sala
+        ctx->wram[0x1B9F] = 0x01;
+        ctx->wram[0x1B9C] = 0x00;
+        ctx->hram[0x76] = 0x27;
+        ctx->wram[0x115D] = 0x01;
     }
 
-    // 2. Determinar si estamos en menús de inicio (Título, Ranuras, Nombre)
+    // 2. Determinar si estamos en menús de inicio
     uint8_t game_state = (g_ctx && g_ctx->wram) ? g_ctx->wram[0x1B95] : 0x00;
     bool is_title_or_intro = (game_state <= 0x03);
 
@@ -840,9 +838,6 @@ bool gb_platform_poll_events(GBContext *ctx)
         k &= ~KEY_START;
     }
 
-    // Variable para controlar si mostramos mapa nativo
-    static bool g_show_map = false;
-
     // Manejo contextual de SELECT
     if (kDown & KEY_SELECT)
     {
@@ -857,10 +852,12 @@ bool gb_platform_poll_events(GBContext *ctx)
         k &= ~KEY_SELECT;
     }
 
+    // Variable estática para forzar 1 frame de botón B suelto al arrancar el hot-swap
+    static int s_hotswap_delay_frames = 0;
+
     // 4. LÓGICA DE HOT-SWAP (X e Y ejecutados mediante B)
     if (!is_title_or_intro && ctx)
     {
-        // Al presionar X o Y: respaldar B y colocar el ítem
         if (!s_hotswap_active)
         {
             if (kDown & KEY_X)
@@ -872,6 +869,8 @@ bool gb_platform_poll_events(GBContext *ctx)
                     gb_write8(ctx, WRAM_ITEM_B, item);
                     s_hotswap_active = true;
                     s_active_hotswap_btn = 1;
+                    // Forzar que este primer frame B se reporte como SUELTO a la GB
+                    s_hotswap_delay_frames = 1;
                 }
             }
             else if (kDown & KEY_Y)
@@ -883,11 +882,12 @@ bool gb_platform_poll_events(GBContext *ctx)
                     gb_write8(ctx, WRAM_ITEM_B, item);
                     s_hotswap_active = true;
                     s_active_hotswap_btn = 2;
+                    // Forzar que este primer frame B se reporte como SUELTO a la GB
+                    s_hotswap_delay_frames = 1;
                 }
             }
         }
 
-        // Al soltar el botón correspondiente: restaurar B
         if (s_hotswap_active)
         {
             bool released = (s_active_hotswap_btn == 1 && (kUp & KEY_X)) ||
@@ -897,8 +897,32 @@ bool gb_platform_poll_events(GBContext *ctx)
                 gb_write8(ctx, WRAM_ITEM_B, s_backup_item_b);
                 s_hotswap_active = false;
                 s_active_hotswap_btn = 0;
+                s_hotswap_delay_frames = 0;
             }
         }
+    }
+
+    // 5. Determinar el estado lógico de B para la Game Boy
+    bool gb_btn_b = false;
+
+    if (s_hotswap_delay_frames > 0)
+    {
+        // En este frame B DEBE estar suelto para registrar el flanco
+        s_hotswap_delay_frames--;
+        gb_btn_b = false;
+    }
+    else if (s_hotswap_active)
+    {
+        // Con hot-swap activo, B solo se presiona si X o Y están retenidos
+        if (s_active_hotswap_btn == 1)
+            gb_btn_b = (k & KEY_X) != 0;
+        else if (s_active_hotswap_btn == 2)
+            gb_btn_b = (k & KEY_Y) != 0;
+    }
+    else
+    {
+        // Estado físico normal
+        gb_btn_b = (k & KEY_B) != 0;
     }
 
     uint8_t btns = 0xFF, dpad = 0xFF;
@@ -913,11 +937,14 @@ bool gb_platform_poll_events(GBContext *ctx)
     if (k & (KEY_DDOWN | KEY_CPAD_DOWN))
         dpad &= ~(1 << 3);
 
-    // 2. Botones físicos y hot-swap
+    // 2. Botones hacia la Game Boy
     if (k & KEY_A)
         btns &= ~(1 << 0);
-    if ((k & KEY_B) || s_hotswap_active)
+
+    // ¡AQUÍ ESTABA EL ERROR! Usamos gb_btn_b
+    if (gb_btn_b)
         btns &= ~(1 << 1);
+
     if (k & KEY_SELECT)
         btns &= ~(1 << 2);
     if (k & KEY_START)
@@ -927,7 +954,7 @@ bool gb_platform_poll_events(GBContext *ctx)
     if (s_trigger_save_menu_frames > 0)
     {
         s_trigger_save_menu_frames--;
-        btns &= ~0x0F; // Forzar A (bit 0), B (bit 1), Select (bit 2) y Start (bit 3) en 0
+        btns &= ~0x0F;
     }
 
     // 4. Asignación definitiva

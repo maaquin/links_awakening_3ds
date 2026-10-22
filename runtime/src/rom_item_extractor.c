@@ -20,6 +20,8 @@ void debug_printf_ex(float x, float y, float scale, float r, float g, float b, c
 #define ROM_KEY_FACE_BASE 0x30C40   // Llave Rostro (8x16 px = 32 bytes)
 #define ROM_KEY_BIRD_BASE 0x30C60   // Llave Pájaro (8x16 px = 32 bytes)
 
+#define ROM_GOLDEN_LEAVE 0x30CA0 // Hojas doradas
+
 #define ROM_TOADSTOOL_BASE 0x328C0  // Hongo (8x16 px = 32 bytes)
 #define ROM_RUPEE_ICON_BASE 0x30D00 // Rupia del menú (8x16 px = 32 bytes)
 
@@ -42,16 +44,20 @@ void debug_printf_ex(float x, float y, float scale, float r, float g, float b, c
 #define MAP_COL_OUTLINE 0x381808FF // Color 3: Café muy oscuro (bordes y líneas)
 
 // elementos de mazmorra
-#define ROM_DUNGEON_MAP_BASE         0x4BD00 // Mapa (Bloque 4, mitad izq)
-#define ROM_DUNGEON_COMPASS_BASE     0x4BD20 // Brújula (Bloque 4, mitad der)
-#define ROM_DUNGEON_BEAK_BASE        0x4BD40 // Pico de piedra (Bloque 5, mitad izq)
-#define ROM_DUNGEON_BOSS_KEY_BASE    0x4BD60 // Llave de Jefe (Bloque 5, mitad der)
-#define ROM_DUNGEON_SMALL_KEY_BASE   0x4BDA0 // Llave pequeña (Bloque 6, mitad der)
+#define ROM_DUNGEON_MAP_BASE 0x4BD00       // Mapa (Bloque 4, mitad izq)
+#define ROM_DUNGEON_COMPASS_BASE 0x4BD20   // Brújula (Bloque 4, mitad der)
+#define ROM_DUNGEON_BEAK_BASE 0x4BD40      // Pico de piedra (Bloque 5, mitad izq)
+#define ROM_DUNGEON_BOSS_KEY_BASE 0x4BD60  // Llave de Jefe (Bloque 5, mitad der)
+#define ROM_DUNGEON_SMALL_KEY_BASE 0x4BDA0 // Llave pequeña (Bloque 6, mitad der)
 
-#define SLOT_COMPASS 59
-#define SLOT_STONE_BEAK 60
-#define SLOT_SMALL_KEY 61
-#define SLOT_BOSS_KEY 62
+#define ROM_DUNGEON_CHEST_ICON_BASE 0x4BFD0 // Cofre (8x8 px = 16 bytes)
+#define ROM_DUNGEON_BOSS_ICON_BASE 0x4BFE0  // Jefe (8x8 px = 16 bytes)
+
+// iconos ocarina
+
+#define ROM_SONG_MARIN_BASE 0x32980 // Cara de Marin
+#define ROM_SONG_MANBO_BASE 0x329A0 // Pez Manbo
+#define ROM_SONG_MAMU_BASE 0x329C0  // Rana Mamu
 
 C3D_Tex g_tex_map_tiles;
 C3D_Tex g_tex_overworld_map;
@@ -297,6 +303,18 @@ static const uint32_t s_pal_tunic_blue[5] = {
 
 static const uint32_t s_pal_photo_frame[4] = {
     0x00000000, 0xFFFFFFFF, 0xC0B0A8FF, 0x101010FF // Blanco / Gris / Sombra
+};
+
+static const uint32_t s_pal_marin[4] = {
+    0x000000FF, 0x000000FF, 0xFF7B08FF, 0xFFBD9CFF // marin
+};
+
+static const uint32_t s_pal_manbo[4] = {
+    0x00000000, 0x000000FF, 0x1984FFFF, 0xFFBD9CFF // pez
+};
+
+static const uint32_t s_pal_mamu[4] = {
+    0x00000000, 0x000000FF, 0x10AD42FF, 0xFFBD9CFF // rana
 };
 
 // Paletas originales GBC corregidas (Índice 1 = Delineado oscuro/negro | Índice 3 = Brillo/blanco)
@@ -805,6 +823,143 @@ bool rom_extract_item_textures(const char *rom_path)
         uint32_t *base_ptr = &linear_atlas[py * 256 + px];
         decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_gold_wood);
         decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_gold_wood);
+    }
+
+    // =========================================================================
+    // 10. Íconos del Minimapa (8x8 px centrados en slots de 16x16)
+    // =========================================================================
+
+    // Slot 67: Cofre de mazmorra (8x8 px) - Paleta dorada
+    fseek(f, ROM_DUNGEON_CHEST_ICON_BASE, SEEK_SET);
+    if (fread(buffer, 1, 16, f) == 16)
+    {
+        int px = (67 % 16) * 16 + 4; // centrado (+4 px)
+        int py = (67 / 16) * 16 + 4;
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_gold_wood);
+        fill_internal_holes(base_ptr, 16, 16, 256);
+    }
+
+    // Slot 68: Jefe / Calavera (8x8 px) - Paleta roja
+    fseek(f, ROM_DUNGEON_BOSS_ICON_BASE, SEEK_SET);
+    if (fread(buffer, 1, 16, f) == 16)
+    {
+        int px = (68 % 16) * 16 + 4;
+        int py = (68 / 16) * 16 + 4;
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_red_fire);
+        fill_internal_holes(base_ptr, 16, 16, 256);
+    }
+
+    // Slot 69: Rombo blanco con contorno oscuro (Goal / Instrumento)
+    {
+        int px = (69 % 16) * 16 + 4;
+        int py = (69 / 16) * 16 + 4;
+
+        static const uint8_t diamond_outer[8] = {
+            0b00011000,
+            0b00111100,
+            0b01111110,
+            0b11111111,
+            0b11111111,
+            0b01111110,
+            0b00111100,
+            0b00011000};
+        static const uint8_t diamond_inner[8] = {
+            0b00000000,
+            0b00011000,
+            0b00111100,
+            0b01111110,
+            0b01111110,
+            0b00111100,
+            0b00011000,
+            0b00000000};
+
+        for (int y = 0; y < 8; y++)
+        {
+            for (int x = 0; x < 8; x++)
+            {
+                int bit = 7 - x;
+                uint32_t col = 0x00000000;
+                if (diamond_inner[y] & (1 << bit))
+                    col = 0xFFFFFFFF; // Relleno blanco
+                else if (diamond_outer[y] & (1 << bit))
+                    col = 0x181818FF; // Borde oscuro de contraste
+
+                linear_atlas[(py + y) * 256 + (px + x)] = col;
+            }
+        }
+    }
+
+    // =========================================================================
+    // 10. Hojas doradas
+    // =========================================================================
+
+    // Slot 70: Hojas doradas
+
+    fseek(f, ROM_GOLDEN_LEAVE, SEEK_SET);
+    if (fread(buffer, 1, 32, f) == 32)
+    {
+        int px = (70 % 16) * 16 + 4;
+        int py = (70 / 16) * 16;
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, s_pal_gold_wood);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_gold_wood);
+    }
+
+    // =============================================================================
+    // 11. ÍCONOS DE LAS 3 CANCIONES DE LA OCARINA (8x8 px = 16 bytes cada uno)
+    // =============================================================================
+
+    // Slot 71: Marin (Paleta roja / piel)
+    fseek(f, ROM_SONG_MARIN_BASE, SEEK_SET);
+    if (fread(buffer, 1, 32, f) == 32)
+    {
+        int px = (71 % 16) * 16;
+        int py = (71 / 16) * 16;
+        uint32_t *base = &linear_atlas[py * 256 + px];
+
+        // Mitad izquierda (8x16 px)
+        decode_tile_pal(&buffer[0], base, 256, s_pal_marin);
+        decode_tile_pal(&buffer[16], base + (8 * 256), 256, s_pal_marin);
+
+        // Mitad derecha en espejo horizontal (Flip X = true)
+        decode_tile_pal_ex(&buffer[0], base + 8, 256, s_pal_marin, true);
+        decode_tile_pal_ex(&buffer[16], base + (8 * 256) + 8, 256, s_pal_marin, true);
+    }
+
+    // Slot 72: Manbo (Paleta azul)
+    fseek(f, ROM_SONG_MANBO_BASE, SEEK_SET);
+    if (fread(buffer, 1, 32, f) == 32)
+    {
+        int px = (72 % 16) * 16;
+        int py = (72 / 16) * 16;
+        uint32_t *base = &linear_atlas[py * 256 + px];
+
+        // Mitad izquierda (8x16 px)
+        decode_tile_pal(&buffer[0], base, 256, s_pal_manbo);
+        decode_tile_pal(&buffer[16], base + (8 * 256), 256, s_pal_manbo);
+
+        // Mitad derecha en espejo horizontal (Flip X = true)
+        decode_tile_pal_ex(&buffer[0], base + 8, 256, s_pal_manbo, true);
+        decode_tile_pal_ex(&buffer[16], base + (8 * 256) + 8, 256, s_pal_manbo, true);
+    }
+
+    // Slot 73: Mamu (Paleta verde)
+    fseek(f, ROM_SONG_MAMU_BASE, SEEK_SET);
+    if (fread(buffer, 1, 32, f) == 32)
+    {
+        int px = (73 % 16) * 16;
+        int py = (73 / 16) * 16;
+        uint32_t *base = &linear_atlas[py * 256 + px];
+
+        // Mitad izquierda (8x16 px)
+        decode_tile_pal(&buffer[0], base, 256, s_pal_mamu);
+        decode_tile_pal(&buffer[16], base + (8 * 256), 256, s_pal_mamu);
+
+        // Mitad derecha en espejo horizontal (Flip X = true)
+        decode_tile_pal_ex(&buffer[0], base + 8, 256, s_pal_mamu, true);
+        decode_tile_pal_ex(&buffer[16], base + (8 * 256) + 8, 256, s_pal_mamu, true);
     }
 
     fclose(f);
