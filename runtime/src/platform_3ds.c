@@ -771,8 +771,8 @@ void gb_platform_register_context(GBContext *ctx)
 // sistema de botones x e y
 #define WRAM_INV_ITEMS_START 0xDB02
 #define WRAM_ITEM_B 0xDB00
-#define WRAM_SLOT_X (WRAM_INV_ITEMS_START + 10) // 0xDB0C
-#define WRAM_SLOT_Y 0xDB10                      // 0xDB10
+#define WRAM_SLOT_X 0xDC10
+#define WRAM_SLOT_Y 0xDC11
 
 static int s_trigger_save_menu_frames = 0;
 

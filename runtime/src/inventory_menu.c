@@ -20,8 +20,8 @@ int debug_get_vbo_offset(void);
 #define WRAM_EQUIP_SLOT_B 0xDB00
 #define WRAM_EQUIP_SLOT_A 0xDB01
 #define WRAM_INV_ITEMS_START 0xDB02
-#define WRAM_EQUIP_SLOT_X (WRAM_INV_ITEMS_START + 10)
-#define WRAM_EQUIP_SLOT_Y 0xDB10
+#define WRAM_EQUIP_SLOT_X 0xDC10
+#define WRAM_EQUIP_SLOT_Y 0xDC11
 #define WRAM_SHIELD_LEVEL 0xDB44
 #define WRAM_SWORD_LEVEL 0xDB4E
 #define WRAM_MAX_HEARTS 0xDB5B
@@ -48,7 +48,7 @@ int debug_get_vbo_offset(void);
 #define WRAM_SEASHELLS_COUNT 0x1B0F
 
 // información para equipo
-#define WRAM_FLIPPERS 0xDB3E   // 0x01 = Aletas obtenidas
+#define WRAM_FLIPPERS 0xDB0C   // 0x01 = Aletas obtenidas
 #define WRAM_TRADE_ITEM 0xDB0E // Objeto de intercambio activo (0x01 - 0x0E)
 #define WRAM_RUPEES_H 0xDB5D   // Rupias (centenas)
 #define WRAM_RUPEES_L 0xDB5E   // Rupias (decenas y unidades)
@@ -78,6 +78,11 @@ typedef struct
 } OcarinaPopup;
 
 static OcarinaPopup g_ocarina_popup = {0};
+
+// Colas reales de audio en HRAM (0xFFF2 - 0xFF80 = 0x72)
+#define HRAM_SFX_JINGLE 0x72 // 0xFFF2: Cursores de menú y confirmaciones
+#define HRAM_SFX_WAVE 0x73   // 0xFFF3: Efectos melódicos / salto
+#define HRAM_SFX_NOISE 0x74  // 0xFFF4: Efectos físicos / golpes
 
 bool hotswap_is_active(void);
 uint8_t hotswap_get_backup_b(void);
@@ -729,6 +734,14 @@ void render_overworld_map(GBContext *ctx)
     }
 }
 
+static void play_menu_sfx(GBContext *ctx, uint8_t channel_offset, uint8_t sfx_id)
+{
+    if (!ctx || !ctx->hram)
+        return;
+
+    ctx->hram[channel_offset] = sfx_id;
+}
+
 void inventory_menu_update(GBContext *ctx)
 {
     if (!ctx)
@@ -767,6 +780,7 @@ void inventory_menu_update(GBContext *ctx)
                     {
                         gb_write8(ctx, WRAM_OCARINA_SELECTED, s);
                         touched_option = true;
+                        play_menu_sfx(ctx, HRAM_SFX_WAVE, 0x1A); // Tono de confirmación
                         g_ocarina_popup.open = false;
                         break;
                     }
@@ -776,6 +790,7 @@ void inventory_menu_update(GBContext *ctx)
             // Si tocó en cualquier otra parte fuera o dentro de la ventana, cerrar el popup
             if (!touched_option)
             {
+                play_menu_sfx(ctx, HRAM_SFX_JINGLE, 0x08);
                 g_ocarina_popup.open = false;
             }
             return; // Consumimos el input para que no toque nada del fondo
@@ -784,9 +799,15 @@ void inventory_menu_update(GBContext *ctx)
     }
 
     if (kDown & KEY_L)
+    {
         g_active_tab = (g_active_tab + TAB_COUNT - 1) % TAB_COUNT;
+        play_menu_sfx(ctx, HRAM_SFX_WAVE, 0x06);
+    }
     if (kDown & KEY_R)
+    {
         g_active_tab = (g_active_tab + 1) % TAB_COUNT;
+        play_menu_sfx(ctx, HRAM_SFX_WAVE, 0x06);
+    }
 
     if (kDown & KEY_TOUCH)
     {
@@ -798,6 +819,7 @@ void inventory_menu_update(GBContext *ctx)
                 g_active_tab = TAB_QUEST;
             else
                 g_active_tab = TAB_MAP;
+            play_menu_sfx(ctx, HRAM_SFX_WAVE, 0x06);
             return;
         }
     }
@@ -957,6 +979,7 @@ void inventory_menu_update(GBContext *ctx)
                     }
                 }
             }
+            play_menu_sfx(ctx, HRAM_SFX_WAVE, 0x1A); // Sonido corto al colocar/equipar
             g_drag.active = false;
         }
     }
@@ -1042,34 +1065,38 @@ void inventory_menu_render(GBContext *ctx)
         debug_printf_ex(g_slot_equip_x.x - 13.0f, g_slot_equip_x.y, 1.3f, col_r, col_g, col_b, "X");
         debug_printf_ex(g_slot_equip_y.x - 13.0f, g_slot_equip_y.y, 1.3f, col_r, col_g, col_b, "Y");
 
-        // Ítems equipados
+        // Ítems equipados (solo se dibujan si no se están arrastrando desde aquí)
         uint8_t eq_b = hotswap_is_active() ? hotswap_get_backup_b() : gb_read8(ctx, WRAM_EQUIP_SLOT_B);
         uint8_t eq_a = gb_read8(ctx, WRAM_EQUIP_SLOT_A);
         uint8_t eq_x = item_x;
         uint8_t eq_y = item_y;
 
-        draw_slot_item(ctx, eq_b, g_slot_equip_b.x + 4.0f, g_slot_equip_b.y, 32.0f);
-        draw_slot_item(ctx, eq_a, g_slot_equip_a.x + 4.0f, g_slot_equip_a.y, 32.0f);
-        draw_slot_item(ctx, eq_x, g_slot_equip_x.x + 4.0f, g_slot_equip_x.y, 32.0f);
-        draw_slot_item(ctx, eq_y, g_slot_equip_y.x + 4.0f, g_slot_equip_y.y, 32.0f);
+        if (!(g_drag.active && g_drag.source_slot == -1))
+            draw_slot_item(ctx, eq_b, g_slot_equip_b.x + 4.0f, g_slot_equip_b.y, 32.0f);
+
+        if (!(g_drag.active && g_drag.source_slot == -2))
+            draw_slot_item(ctx, eq_a, g_slot_equip_a.x + 4.0f, g_slot_equip_a.y, 32.0f);
+
+        if (!(g_drag.active && g_drag.source_slot == -3))
+            draw_slot_item(ctx, eq_x, g_slot_equip_x.x + 4.0f, g_slot_equip_x.y, 32.0f);
+
+        if (!(g_drag.active && g_drag.source_slot == -4))
+            draw_slot_item(ctx, eq_y, g_slot_equip_y.x + 4.0f, g_slot_equip_y.y, 32.0f);
 
         // Ítems de las 10 casillas (centrados dentro de cada celda de 48x39 px)
         for (int i = 0; i < 10; i++)
         {
             uint8_t item = gb_read8(ctx, WRAM_INV_ITEMS_START + i);
 
+            // Omitir si está vacío, si está en X/Y, o si es la casilla que se está arrastrando
             if (item == 0x00 || item == item_x || item == item_y)
+                continue;
+
+            if (g_drag.active && g_drag.source_slot == i)
                 continue;
 
             draw_slot_item(ctx, item, g_slots[i].x + 8.0f, g_slots[i].y + 4.0f, 32.0f);
         }
-
-        /*
-        for (int i = 0; i < 10; i++)
-        {
-            uint8_t test_id = i + 1; // Genera IDs del 0x01 al 0x0C consecutivamente
-            draw_item_icon(test_id, g_slots[i].x + 8.0f, g_slots[i].y + 4.0f, 32.0f);
-        }*/
 
         // Ítem arrastrado con el Stylus (centrado bajo la punta del lápiz)
         if (g_drag.active)
