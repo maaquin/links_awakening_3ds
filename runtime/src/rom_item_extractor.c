@@ -54,10 +54,21 @@ void debug_printf_ex(float x, float y, float scale, float r, float g, float b, c
 #define ROM_DUNGEON_BOSS_ICON_BASE 0x4BFE0  // Jefe (8x8 px = 16 bytes)
 
 // iconos ocarina
-
 #define ROM_SONG_MARIN_BASE 0x32980 // Cara de Marin
 #define ROM_SONG_MANBO_BASE 0x329A0 // Pez Manbo
 #define ROM_SONG_MAMU_BASE 0x329C0  // Rana Mamu
+
+// iconos pantalla de título
+#define ROM_LINK_TITLE 0x4B680        // link de pie
+#define ROM_LINK_SLEEP_TITLE 0x38D40  // link acostado
+#define ROM_FOX_TITLE 0x4A580         // zorro aldea mabe
+#define ROM_CHIKEN_TITLE 0x4A500      // pollo aldea mabe
+#define ROM_MARIN_SIT_TITLE 0x4A080   // marin sentada
+#define ROM_MARIN_TITLE 0x38F00       // marin de pie
+#define ROM_RACOON_TITLE 0x48880      // mapache bosque misterioso
+#define ROM_CHINESE_TITLE 0x38800     // tipo chino de la tienda
+#define ROM_TARIN_SLEEP_TITLE 0x38E40 // tarin acostado
+#define ROM_ANCIENT_TITLE 0x38500     // un viejo con túnica
 
 C3D_Tex g_tex_map_tiles;
 C3D_Tex g_tex_overworld_map;
@@ -307,6 +318,18 @@ static const uint32_t s_pal_photo_frame[4] = {
 
 static const uint32_t s_pal_marin[4] = {
     0x000000FF, 0x000000FF, 0xFF7B08FF, 0xFFBD9CFF // marin
+};
+
+static const uint32_t s_pal_link[4] = {
+    0x000000FF, 0x000000FF, 0x10A840FF, 0xFFBD9CFF // marin
+};
+
+static const uint32_t s_pal_racoon[4] = {
+    0x000000FF, 0x000000FF, 0x8C6542FF, 0xFFBD9CFF // marin
+};
+
+static const uint32_t s_pal_blue[4] = {
+    0x000000FF, 0x000000FF, 0x42588CFF, 0xFFBD9CFF // marin
 };
 
 static const uint32_t s_pal_manbo[4] = {
@@ -960,6 +983,216 @@ bool rom_extract_item_textures(const char *rom_path)
         // Mitad derecha en espejo horizontal (Flip X = true)
         decode_tile_pal_ex(&buffer[0], base + 8, 256, s_pal_mamu, true);
         decode_tile_pal_ex(&buffer[16], base + (8 * 256) + 8, 256, s_pal_mamu, true);
+    }
+
+    // =============================================================================
+    // 12. Escudo y brazalete mejorados
+    // =============================================================================
+
+    // Slot 74: Brazalete L-2
+    fseek(f, 0x30820, SEEK_SET);
+    if (fread(buffer, 1, 32, f) == 32)
+    {
+
+        const uint32_t *pal = s_pal_red_fire;
+        int px = (74 % 16) * 16 + 4;
+        int py = (74 / 16) * 16;
+
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, pal);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, pal);
+
+        fill_internal_holes(base_ptr, 8, 16, 256);
+    }
+
+    // Slot 75: Escudo L-2
+    fseek(f, 0x30860, SEEK_SET);
+    if (fread(buffer, 1, 32, f) == 32)
+    {
+
+        const uint32_t *pal = s_pal_red_fire;
+        int px = (75 % 16) * 16 + 4;
+        int py = (75 / 16) * 16;
+
+        uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+        decode_tile_pal(&buffer[0], base_ptr, 256, pal);
+        decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, pal);
+
+        fill_internal_holes(base_ptr, 8, 16, 256);
+    }
+
+    // =========================================================================
+    // 13. Íconos de la pantalla de título (Slots 76 a 85)
+    // =========================================================================
+
+    // Slot 76: Link de pie (16x16 px = 64 bytes)
+    {
+        fseek(f, ROM_LINK_TITLE, SEEK_SET);
+        if (fread(buffer, 1, 64, f) == 64)
+        {
+            int slot = 76;
+            int px = (slot % 16) * 16;
+            int py = (slot / 16) * 16;
+            uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+            decode_tile_pal(&buffer[0],  base_ptr,             256, s_pal_link);
+            decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_link);
+            decode_tile_pal(&buffer[32], base_ptr + 8,         256, s_pal_link);
+            decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, s_pal_link);
+            fill_internal_holes(base_ptr, 16, 16, 256);
+        }
+    }
+
+    // Slot 77: Link acostado (16x16 px = 64 bytes)
+    {
+        fseek(f, ROM_LINK_SLEEP_TITLE, SEEK_SET);
+        if (fread(buffer, 1, 64, f) == 64)
+        {
+            int slot = 77;
+            int px = (slot % 16) * 16;
+            int py = (slot / 16) * 16;
+            uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+            decode_tile_pal(&buffer[0],  base_ptr,             256, s_pal_link);
+            decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_link);
+            decode_tile_pal(&buffer[32], base_ptr + 8,         256, s_pal_link);
+            decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, s_pal_link);
+            fill_internal_holes(base_ptr, 16, 16, 256);
+        }
+    }
+
+    // Slot 78: Zorro de la aldea Mabe (16x16 px = 64 bytes)
+    {
+        fseek(f, ROM_FOX_TITLE, SEEK_SET);
+        if (fread(buffer, 1, 64, f) == 64)
+        {
+            int slot = 78;
+            int px = (slot % 16) * 16;
+            int py = (slot / 16) * 16;
+            uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+            decode_tile_pal(&buffer[0],  base_ptr,             256, s_pal_marin);
+            decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_marin);
+            decode_tile_pal(&buffer[32], base_ptr + 8,         256, s_pal_marin);
+            decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, s_pal_marin);
+            fill_internal_holes(base_ptr, 16, 16, 256);
+        }
+    }
+
+    // Slot 79: Pollo de la aldea Mabe (16x16 px = 64 bytes)
+    {
+        fseek(f, ROM_CHIKEN_TITLE, SEEK_SET);
+        if (fread(buffer, 1, 64, f) == 64)
+        {
+            int slot = 79;
+            int px = (slot % 16) * 16;
+            int py = (slot / 16) * 16;
+            uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+            decode_tile_pal(&buffer[0],  base_ptr,             256, s_pal_marin);
+            decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_marin);
+            decode_tile_pal(&buffer[32], base_ptr + 8,         256, s_pal_marin);
+            decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, s_pal_marin);
+            fill_internal_holes(base_ptr, 16, 16, 256);
+        }
+    }
+
+    // Slot 80: Marin sentada (16x16 px = 64 bytes)
+    {
+        fseek(f, ROM_MARIN_SIT_TITLE, SEEK_SET);
+        if (fread(buffer, 1, 64, f) == 64)
+        {
+            int slot = 80;
+            int px = (slot % 16) * 16;
+            int py = (slot / 16) * 16;
+            uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+            decode_tile_pal(&buffer[0],  base_ptr,             256, s_pal_marin);
+            decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_marin);
+            decode_tile_pal(&buffer[32], base_ptr + 8,         256, s_pal_marin);
+            decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, s_pal_marin);
+            fill_internal_holes(base_ptr, 16, 16, 256);
+        }
+    }
+
+    // Slot 81: Marin de pie (16x16 px = 64 bytes)
+    {
+        fseek(f, ROM_MARIN_TITLE, SEEK_SET);
+        if (fread(buffer, 1, 64, f) == 64)
+        {
+            int slot = 81;
+            int px = (slot % 16) * 16;
+            int py = (slot / 16) * 16;
+            uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+            decode_tile_pal(&buffer[0],  base_ptr,             256, s_pal_marin);
+            decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_marin);
+            decode_tile_pal(&buffer[32], base_ptr + 8,         256, s_pal_marin);
+            decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, s_pal_marin);
+            fill_internal_holes(base_ptr, 16, 16, 256);
+        }
+    }
+
+    // Slot 82: Mapache del Bosque Misterioso (16x16 px = 64 bytes)
+    {
+        fseek(f, ROM_RACOON_TITLE, SEEK_SET);
+        if (fread(buffer, 1, 64, f) == 64)
+        {
+            int slot = 82;
+            int px = (slot % 16) * 16;
+            int py = (slot / 16) * 16;
+            uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+            decode_tile_pal(&buffer[0],  base_ptr,             256, s_pal_racoon);
+            decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_racoon);
+            decode_tile_pal(&buffer[32], base_ptr + 8,         256, s_pal_racoon);
+            decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, s_pal_racoon);
+            fill_internal_holes(base_ptr, 16, 16, 256);
+        }
+    }
+
+    // Slot 83: Vendedor de la tienda (16x16 px = 64 bytes)
+    {
+        fseek(f, ROM_CHINESE_TITLE, SEEK_SET);
+        if (fread(buffer, 1, 64, f) == 64)
+        {
+            int slot = 83;
+            int px = (slot % 16) * 16;
+            int py = (slot / 16) * 16;
+            uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+            decode_tile_pal(&buffer[0],  base_ptr,             256, s_pal_blue);
+            decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_blue);
+            decode_tile_pal(&buffer[32], base_ptr + 8,         256, s_pal_blue);
+            decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, s_pal_blue);
+            fill_internal_holes(base_ptr, 16, 16, 256);
+        }
+    }
+
+    // Slot 84: Tarin acostado (16x16 px = 64 bytes)
+    {
+        fseek(f, ROM_TARIN_SLEEP_TITLE, SEEK_SET);
+        if (fread(buffer, 1, 64, f) == 64)
+        {
+            int slot = 84;
+            int px = (slot % 16) * 16;
+            int py = (slot / 16) * 16;
+            uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+            decode_tile_pal(&buffer[0],  base_ptr,             256, s_pal_racoon);
+            decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_racoon);
+            decode_tile_pal(&buffer[32], base_ptr + 8,         256, s_pal_racoon);
+            decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, s_pal_racoon);
+            fill_internal_holes(base_ptr, 16, 16, 256);
+        }
+    }
+
+    // Slot 85: Anciano con túnica (16x16 px = 64 bytes)
+    {
+        fseek(f, ROM_ANCIENT_TITLE, SEEK_SET);
+        if (fread(buffer, 1, 64, f) == 64)
+        {
+            int slot = 85;
+            int px = (slot % 16) * 16;
+            int py = (slot / 16) * 16;
+            uint32_t *base_ptr = &linear_atlas[py * 256 + px];
+            decode_tile_pal(&buffer[0],  base_ptr,             256, s_pal_blue);
+            decode_tile_pal(&buffer[16], base_ptr + (8 * 256), 256, s_pal_blue);
+            decode_tile_pal(&buffer[32], base_ptr + 8,         256, s_pal_blue);
+            decode_tile_pal(&buffer[48], base_ptr + (8 * 256) + 8, 256, s_pal_blue);
+            fill_internal_holes(base_ptr, 16, 16, 256);
+        }
     }
 
     fclose(f);

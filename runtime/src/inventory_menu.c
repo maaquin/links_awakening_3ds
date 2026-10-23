@@ -22,8 +22,9 @@ int debug_get_vbo_offset(void);
 #define WRAM_INV_ITEMS_START 0xDB02
 #define WRAM_EQUIP_SLOT_X 0xDC10
 #define WRAM_EQUIP_SLOT_Y 0xDC11
-#define WRAM_SHIELD_LEVEL 0xDB44
-#define WRAM_SWORD_LEVEL 0xDB4E
+#define WRAM_BRACELET_LEVEL 0xDB43 // 1 = L-1, 2 = L-2
+#define WRAM_SHIELD_LEVEL 0xDB44   // 1 = L-1, 2 = L-2
+#define WRAM_SWORD_LEVEL 0xDB4E    // 1 = L-1, 2 = L-2
 #define WRAM_MAX_HEARTS 0xDB5B
 
 // items del inventario
@@ -118,6 +119,195 @@ static InventorySlotUI g_slot_equip_x;
 static InventorySlotUI g_slot_equip_y;
 static DragState g_drag = {0};
 
+// =============================================================================
+// testeo supremo
+// =============================================================================
+
+static uint32_t s_tile_view_base = 0x4C000;
+static int s_cursor_idx = 0; // 0 a 31 (8 columnas x 4 filas de bloques 16x16)
+
+void render_tile_inspector(GBContext *ctx, const char *rom_path)
+{
+    FILE *f = fopen(rom_path, "rb");
+    if (!f)
+        return;
+
+    u32 kDown = hidKeysDown();
+
+    // Panagkuti ti cursor (8 columns x 4 rows)
+    if (kDown & KEY_DRIGHT)
+        s_cursor_idx = (s_cursor_idx + 1) % 32;
+    if (kDown & KEY_DLEFT)
+        s_cursor_idx = (s_cursor_idx + 31) % 32;
+    if (kDown & KEY_DDOWN)
+        s_cursor_idx = (s_cursor_idx + 8) % 32;
+    if (kDown & KEY_DUP)
+        s_cursor_idx = (s_cursor_idx + 24) % 32;
+
+    // Panagdalyasat kadagiti panid ken bangko
+    if (kDown & KEY_R)
+        s_tile_view_base += 0x800;
+    if (kDown & KEY_L)
+        s_tile_view_base -= 0x800;
+    if (kDown & KEY_X)
+        s_tile_view_base += 0x4000;
+    if (kDown & KEY_Y)
+        s_tile_view_base -= 0x4000;
+    if (kDown & KEY_A)
+        s_tile_view_base += 64;
+    if (kDown & KEY_B)
+        s_tile_view_base -= 64;
+
+    // Nangisit a backdrop
+    int bg = debug_get_vbo_offset();
+    debug_push_rect(0.0f, 0.0f, 320.0f, 240.0f, 0.10f, 0.08f, 0.06f, 1.0f);
+    debug_flush_rects(bg);
+
+    const float start_x = 32.0f;
+    const float start_y = 35.0f;
+    const float block_sz = 32.0f;
+
+    uint8_t raw_block[64];
+
+    // Husto nga urnos ti 16x16 (Top-Left, Top-Right, Bottom-Left, Bottom-Right)
+    static const int sub_offsets_x[4] = {0, 0, 8, 8};
+    static const int sub_offsets_y[4] = {0, 8, 0, 8};
+
+    for (int b = 0; b < 32; b++)
+    {
+        uint32_t block_addr = s_tile_view_base + (b * 64);
+        fseek(f, block_addr, SEEK_SET);
+        if (fread(raw_block, 1, 64, f) != 64)
+            break;
+
+        int col = b % 8;
+        int row = b / 8;
+        float bx = start_x + (col * (block_sz + 2.0f));
+        float by = start_y + (row * (block_sz + 2.0f));
+
+        int v_offset = debug_get_vbo_offset();
+
+        for (int sub = 0; sub < 4; sub++)
+        {
+            uint8_t *tile_data = &raw_block[sub * 16];
+            float ox = bx + (sub_offsets_x[sub] * 2.0f);
+            float oy = by + (sub_offsets_y[sub] * 2.0f);
+
+            for (int y = 0; y < 8; y++)
+            {
+                uint8_t low = tile_data[y * 2];
+                uint8_t high = tile_data[y * 2 + 1];
+
+                // Panangbukel kadagiti horizontal spans tapno saan a mapunno ti VBO
+                int x = 0;
+                while (x < 8)
+                {
+                    int bit = 7 - x;
+                    int c = ((low >> bit) & 1) | (((high >> bit) & 1) << 1);
+
+                    if (c == 0)
+                    {
+                        x++;
+                        continue;
+                    }
+
+                    // Kitaen no mano a pixels ti agsasaruno nga agpapada ti maris
+                    int span_len = 1;
+                    while ((x + span_len) < 8)
+                    {
+                        int next_bit = 7 - (x + span_len);
+                        int next_c = ((low >> next_bit) & 1) | (((high >> next_bit) & 1) << 1);
+                        if (next_c != c)
+                            break;
+                        span_len++;
+                    }
+
+                    float r = 0.0f, g = 0.0f, b_col = 0.0f;
+                    if (c == 1)
+                    {
+                        r = 0.3f;
+                        g = 0.3f;
+                        b_col = 0.3f;
+                    } // Gris
+                    else if (c == 2)
+                    {
+                        r = 0.9f;
+                        g = 0.5f;
+                        b_col = 0.2f;
+                    } // Naranja
+                    else if (c == 3)
+                    {
+                        r = 1.0f;
+                        g = 1.0f;
+                        b_col = 1.0f;
+                    } // Puraw
+
+                    // Agiduron laeng iti maysa a rectangle para iti intero a span
+                    debug_push_rect(ox + (x * 2.0f), oy + (y * 2.0f), span_len * 2.0f, 2.0f, r, g, b_col, 1.0f);
+
+                    x += span_len;
+                }
+            }
+        }
+        debug_flush_rects(v_offset);
+    }
+
+    // Cursor frame (32x32 px)
+    int cur_col = s_cursor_idx % 8;
+    int cur_row = s_cursor_idx / 8;
+    float cx = start_x + (cur_col * (block_sz + 2.0f));
+    float cy = start_y + (cur_row * (block_sz + 2.0f));
+
+    int cur_vbo = debug_get_vbo_offset();
+    debug_push_rect(cx - 1.0f, cy - 1.0f, block_sz + 2.0f, 1.0f, 1.0f, 0.9f, 0.2f, 1.0f);
+    debug_push_rect(cx - 1.0f, cy + block_sz, block_sz + 2.0f, 1.0f, 1.0f, 0.9f, 0.2f, 1.0f);
+    debug_push_rect(cx - 1.0f, cy - 1.0f, 1.0f, block_sz + 2.0f, 1.0f, 0.9f, 0.2f, 1.0f);
+    debug_push_rect(cx + block_sz, cy - 1.0f, 1.0f, block_sz + 2.0f, 1.0f, 0.9f, 0.2f, 1.0f);
+    debug_flush_rects(cur_vbo);
+
+    // Teksto ti impormasion
+    uint32_t selected_addr = s_tile_view_base + (s_cursor_idx * 64);
+    debug_printf(20.0f, 180.0f, "ADDR 16x16: 0x%05X  [Idx: %d]", selected_addr, s_cursor_idx);
+    debug_printf(20.0f, 195.0f, "BASE: 0x%05X  (R/L: pantalla  X/Y: +/-16KB)", s_tile_view_base);
+    debug_printf(20.0f, 210.0f, "DPAD: mover cursor  A/B: +/-1 bloque (64B)");
+
+    fclose(f);
+}
+
+// =============================================================================
+// fin testeo supremo
+// =============================================================================
+
+static int s_title_random_slot = -1;
+
+void render_title_subscreen(GBContext *ctx)
+{
+    // 1. Fondo oscuro uniforme para mantener la estética
+    int bg = debug_get_vbo_offset();
+    debug_push_rect(0.0f, 0.0f, 320.0f, 240.0f, 0.10f, 0.08f, 0.06f, 1.0f);
+    debug_flush_rects(bg);
+
+    // 2. Elegir un slot aleatorio entre 76 y 85 solo una vez al iniciar la pantalla
+    if (s_title_random_slot < 76 || s_title_random_slot > 85)
+    {
+        // generación de semilla
+        s_title_random_slot = 76 + (osGetTime() % 10);
+    }
+
+    // 3. Coordenadas de corte UV en el atlas de 256x256
+    int col = s_title_random_slot % 16;
+    int row = s_title_random_slot / 16;
+    float src_x = col * 16.0f;
+    float src_y = row * 16.0f;
+
+    // 4. Centrado en pantalla inferior (320 x 240 px) escalado a 32x32 px
+    const float icon_sz = 32.0f;
+    const float center_x = (320.0f - icon_sz) * 0.5f; // 144.0f
+    const float center_y = (240.0f - icon_sz) * 0.5f; // 104.0f
+
+    ui_draw_sub_sprite(&g_tex_items, center_x, center_y, icon_sz, icon_sz, src_x, src_y, 16.0f, 16.0f);
+}
+
 static const char *s_instrument_names[8] = {
     "1.VIOLONCHELO", "2.CUERNO OLIFANTE", "3.CAMPANA", "4.ARPA",
     "5.MARIMBA", "6.TRIANGULO", "7.ORGANO", "8.TAMBOR"};
@@ -144,6 +334,27 @@ static void draw_item_ammo(GBContext *ctx, uint8_t item_id, float x, float y)
     if (!ctx)
         return;
 
+    const float col_r = 0.85f, col_g = 0.80f, col_b = 0.53f;
+
+    // 1. Etiquetas de nivel (L-1 / L-2) para Espada, Escudo y Brazalete
+    if (item_id == ITEM_SWORD || item_id == ITEM_SHIELD || item_id == ITEM_BRACELET)
+    {
+        uint8_t lvl = 1;
+        if (item_id == ITEM_SWORD)
+            lvl = gb_read8(ctx, WRAM_SWORD_LEVEL);
+        else if (item_id == ITEM_SHIELD)
+            lvl = gb_read8(ctx, WRAM_SHIELD_LEVEL);
+        else if (item_id == ITEM_BRACELET)
+            lvl = gb_read8(ctx, WRAM_BRACELET_LEVEL);
+
+        if (lvl < 1)
+            lvl = 1; // Por seguridad visual si aún vale 0
+
+        debug_printf_ex(x + 20.0f, y + 20.0f, 0.75f, col_r, col_g, col_b, "L%d", lvl);
+        return;
+    }
+
+    // 2. Contadores de munición (Bombas, Arco, Polvos)
     uint8_t count = 0;
     bool has_ammo = false;
 
@@ -170,7 +381,7 @@ static void draw_item_ammo(GBContext *ctx, uint8_t item_id, float x, float y)
         int display_val = ((count >> 4) * 10) + (count & 0x0F);
 
         // Texto dorado pequeño en la esquina inferior derecha del recuadro
-        debug_printf_ex(x + 18.0f, y + 20.0f, 0.8f, 0.85f, 0.80f, 0.53f, "%02d", display_val);
+        debug_printf_ex(x + 20.0f, y + 20.0f, 0.8f, col_r, col_g, col_b, "%02d", display_val);
     }
 }
 
@@ -252,7 +463,7 @@ static const int s_wram_id_to_atlas_index[16] = {
     [0x0E] = 16,          // Poción (índice 16)
 };
 
-static void draw_item_icon(uint8_t item_id, float x, float y, float size)
+static void draw_item_icon(GBContext *ctx, uint8_t item_id, float x, float y, float size)
 {
     if (item_id == 0x00 || item_id >= 16)
         return;
@@ -260,6 +471,16 @@ static void draw_item_icon(uint8_t item_id, float x, float y, float size)
     int atlas_idx = s_wram_id_to_atlas_index[item_id];
     if (atlas_idx < 0)
         return;
+
+    // Si el Brazalete o el Escudo están en L-2, cambiar al slot rojo del atlas
+    if (item_id == ITEM_BRACELET && gb_read8(ctx, WRAM_BRACELET_LEVEL) >= 2)
+    {
+        atlas_idx = 74; // Slot del Brazalete L-2 (rojo)
+    }
+    else if (item_id == ITEM_SHIELD && gb_read8(ctx, WRAM_SHIELD_LEVEL) >= 2)
+    {
+        atlas_idx = 75; // Slot del Escudo Espejo L-2 (rojo)
+    }
 
     // Coordenadas en la textura atlas de 256x256 (16 columnas x 16px)
     int col = atlas_idx % 16;
@@ -747,6 +968,13 @@ void inventory_menu_update(GBContext *ctx)
     if (!ctx)
         return;
 
+    // determinar si estamos en menús de inicio
+    uint8_t game_state = (ctx && ctx->wram) ? ctx->wram[0x1B95] : 0x00;
+    bool is_title_or_intro = (game_state <= 0x03);
+
+    if (is_title_or_intro)
+        return;
+
     u32 kDown = hidKeysDown();
     u32 kHeld = hidKeysHeld();
     u32 kUp = hidKeysUp();
@@ -1013,7 +1241,7 @@ static void draw_slot_item(GBContext *ctx, uint8_t item, float x, float y, float
         return;
     }
 
-    draw_item_icon(item, x, y, size);
+    draw_item_icon(ctx, item, x, y, size);
     draw_item_ammo(ctx, item, x + 7, y);
 }
 
@@ -1021,6 +1249,16 @@ void inventory_menu_render(GBContext *ctx)
 {
     if (!ctx)
         return;
+
+    // determinar si estamos en menús de inicio
+    uint8_t game_state = (ctx && ctx->wram) ? ctx->wram[0x1B95] : 0x00;
+    bool is_title_or_intro = (game_state <= 0x03);
+
+    if (is_title_or_intro)
+    {
+        render_title_subscreen(ctx);
+        return;
+    }
 
     const float col_r = 0.85f, col_g = 0.80f, col_b = 0.53f; // #D9CC88
 
@@ -1103,8 +1341,6 @@ void inventory_menu_render(GBContext *ctx)
         {
             draw_slot_item(ctx, g_drag.item_id, g_drag.cur_x - 16.0f, g_drag.cur_y - 16.0f, 32.0f);
         }
-
-        // testeo supremo
     }
 
     // ==========================================
